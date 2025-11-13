@@ -41,7 +41,9 @@ SDTP/
 
 - Python 3.10+
 - CUDA 12.1+
-- NVIDIA GPU (RTX 5880+ recommended, ≥24GB VRAM)
+- **Hardware**: 8× NVIDIA RTX 5880 Ada Generation (48GB VRAM each)
+  - Single GPU mode: Uses one GPU
+  - Multi-GPU mode: Uses all 8 GPUs with NVLink cluster
 - ≥50GB disk space for model storage
 
 ### Installation
@@ -90,20 +92,8 @@ See [Stage 1 Summary Report](results/part1_sum.md) for detailed results.
 
 ## Results
 
-- **Single GPU**: 2.6-3.0× prefill speedup
-- **Multi-GPU (8× RTX 5880)**: Up to 10× end-to-end speedup
+- **Single GPU** (NVIDIA RTX 5880 Ada, 48GB): 2.6-3.0× prefill speedup
+- **Multi-GPU** (8× NVIDIA RTX 5880 Ada Generation, 48GB each): Up to 10× end-to-end speedup
 - **Memory Savings**: Up to 34% GPU memory reduction
 - **Performance**: Maintains comparable performance with 65% token pruning
 
-## Citation
-
-If this project helps your research, please cite the original paper:
-
-```bibtex
-@article{sdtp2024,
-  title={Saliency-driven Dynamic Token Pruning for Large Language Models},
-  author={...},
-  journal={...},
-  year={2024}
-}
-```
