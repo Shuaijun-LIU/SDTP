@@ -257,3 +257,7 @@ secrets.json
 *.7z
 *.dmg
 *.iso
+
+# Project documentation files
+paper.txt
+sdtp_reproduction_plan.md
