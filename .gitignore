@@ -153,7 +153,11 @@ data/
 *.weights
 
 # Results and outputs
-results/
+# Ignore results directory contents except fig/ and .md files
+results/*
+!results/fig/
+!results/fig/**
+!results/*.md
 outputs/
 logs/
 # checkpoints/ - allow checkpoints directory, but only .pt files inside
