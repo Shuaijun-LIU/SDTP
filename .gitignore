@@ -261,3 +261,6 @@ secrets.json
 # Project documentation files
 paper.txt
 sdtp_reproduction_plan.md
+
+# Project metadata files (do not upload)
+results/stdp-project-2025.json
