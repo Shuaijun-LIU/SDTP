@@ -90,15 +90,17 @@ class ModelWrapper:
             state_dict = torch.load(self.pruning_module_path, map_location="cpu")
             self.pruning_modules.load_state_dict(state_dict)
             
-            # Move to device
-            device_obj = next(self.model.parameters()).device
-            self.pruning_modules.to(device_obj)
+            # Convert to half precision and set to eval mode
+            # Note: We don't move to a specific device here because with device_map="auto",
+            # different layers are on different GPUs. The pruning modules will be moved
+            # to the correct device dynamically in apply_token_pruning().
             self.pruning_modules.half()
             self.pruning_modules.eval()
             for p in self.pruning_modules.parameters():
                 p.requires_grad = False
             
             print(f"[Init] Pruning modules loaded for layers: {PRUNE_LAYERS}")
+            print("[Init] Note: Pruning modules will be moved to correct device during inference")
 
         print("[Init] >>> Real model loading DONE <<<")
 

@@ -154,6 +154,12 @@ def apply_token_pruning(
         min_tail_ratio = MIN_TAIL_RATIO
     
     seq_len = hidden_states.size(1)
+    device = hidden_states.device
+    dtype = hidden_states.dtype
+
+    # Ensure pruning module is on the same device as hidden_states
+    # This is critical when using device_map="auto" where layers are on different GPUs
+    pruning_module = pruning_module.to(device=device, dtype=dtype)
 
     # [seq_len, hidden]
     hs_flat = hidden_states.squeeze(0)
