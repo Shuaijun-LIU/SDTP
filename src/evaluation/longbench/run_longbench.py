@@ -1,81 +1,54 @@
-"""
-LongBench evaluation main script (setup phase - no inference)
-Main entry point for LongBench evaluation framework
-"""
 import argparse
 import json
 import os
-import sys
-
-# Add project root to path
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-sys.path.insert(0, project_root)
-
-from src.evaluation.longbench.model_wrapper import ModelWrapper
-from src.evaluation.longbench.evaluator import LongBenchEvaluator
-
+from .model_wrapper import ModelWrapper
+from .evaluator import LongBenchEvaluator
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="LongBench evaluation setup (no inference execution)"
-    )
-    parser.add_argument(
-        "--task",
-        type=str,
-        required=True,
-        help="Path to LongBench task JSON file"
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="checkpoints/qwen2-7b-instruct",
-        help="Model name or path"
-    )
-    parser.add_argument(
-        "--pruning_module",
-        type=str,
-        default=None,
-        help="Path to pruning module checkpoint (None for baseline)"
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        default="results/longbench_result.json",
-        help="Output JSON path for setup result"
-    )
-    parser.add_argument(
-        "--num_samples",
-        type=int,
-        default=None,
-        help="Number of samples to evaluate (None = all)"
-    )
-    
-    args = parser.parse_args()
-    
-    # Check if task file exists
-    if not os.path.exists(args.task):
-        print(f"[Error] Task file not found: {args.task}")
-        print("[Info] LongBench task files should be JSON format.")
-        return
-    
-    # Initialize model wrapper (no actual loading)
-    model = ModelWrapper(args.model, pruning_module_path=args.pruning_module)
-    model.load_model()  # Does not actually load
-    
-    # Initialize evaluator
-    evaluator = LongBenchEvaluator(args.task, model)
-    
-    # Run evaluation setup (no inference)
-    result = evaluator.evaluate(num_samples=args.num_samples)
-    
-    # Save setup result
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    with open(args.output, "w") as f:
-        json.dump(result, f, indent=2, ensure_ascii=False)
-    
-    print(f"[OK] Written setup result to {args.output}")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", type=str, required=True)
+    parser.add_argument("--model", type=str, default="checkpoints/qwen2-7b-instruct")
+    parser.add_argument("--pruning_module", type=str, default=None)
+    parser.add_argument("--output", type=str, default="results/longbench_result.json")
+    parser.add_argument("--mode", type=str, default="baseline", choices=["baseline", "sdtp"])
+    parser.add_argument("--do_inference", action="store_true")
+    parser.add_argument("--max_samples", type=int, default=None)
+    parser.add_argument("--save_predictions", action="store_true")
+    parser.add_argument("--prediction_path", type=str, default=None)
+    parser.add_argument("--max_new_tokens", type=int, default=64)
 
+    args = parser.parse_args()
+
+    print("[LongBench] Starting evaluation...")
+    print(f"  Task: {args.task}")
+    print(f"  Model: {args.model}")
+
+    model = ModelWrapper(
+        model_name=args.model,
+        pruning_module_path=args.pruning_module,
+        mode=args.mode,
+        max_new_tokens=args.max_new_tokens,
+    )
+
+    model.load_model(real_load=args.do_inference)
+
+    evaluator = LongBenchEvaluator(
+        task_path=args.task,
+        model=model,
+        max_samples=args.max_samples,
+    )
+
+    result = evaluator.evaluate(
+        do_inference=args.do_inference,
+        save_predictions=args.save_predictions,
+        prediction_path=args.prediction_path,
+    )
+
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    print(f"[OK] Summary saved to {args.output}")
 
 if __name__ == "__main__":
     main()
-
