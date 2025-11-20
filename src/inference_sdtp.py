@@ -21,10 +21,29 @@ PRUNING_CKPT = "checkpoints/pruning_module.pt"
 # Pruning config (must match Stage2)
 # ============================
 MAX_NEW_TOKENS = 128
-PRUNE_LAYERS = [4, 7, 10, 13, 16, 19, 22, 25]
-KEEP_RATIO = 0.7
-MIN_HEAD_TOKENS = 4
-MIN_TAIL_TOKENS = 16
+
+# Configuration presets
+KEEP09_CONFIG = {
+    "prune_layers": [4, 7, 10, 13, 16, 19, 22, 25],  # 8 layers
+    "keep_ratio": 0.9,  # Keep 90% tokens per layer
+    "min_head_tokens": 4,
+    "min_tail_tokens": 16,
+    "cumulative_keep_ratio": 0.9 ** 8,  # ~0.43
+}
+
+KEEP07_CONFIG = {
+    "prune_layers": [4, 7, 10, 13, 16, 19, 22, 25],  # 8 layers
+    "keep_ratio": 0.7,  # Keep 70% tokens per layer
+    "min_head_tokens": 4,
+    "min_tail_tokens": 16,
+    "cumulative_keep_ratio": 0.7 ** 8,  # ~0.058
+}
+
+# Default config (keep07)
+PRUNE_LAYERS = KEEP07_CONFIG["prune_layers"]
+KEEP_RATIO = KEEP07_CONFIG["keep_ratio"]
+MIN_HEAD_TOKENS = KEEP07_CONFIG["min_head_tokens"]
+MIN_TAIL_TOKENS = KEEP07_CONFIG["min_tail_tokens"]
 
 
 # ============================
@@ -52,7 +71,19 @@ class TokenPruningModule(nn.Module):
 # ============================
 # Load model + pruning modules
 # ============================
-def load_model_and_pruners():
+def load_model_and_pruners(prune_layers=None):
+    """
+    Load model and pruning modules.
+    
+    Args:
+        prune_layers: List of layer indices to prune. If None, uses PRUNE_LAYERS.
+    
+    Returns:
+        model, tokenizer, pruning_modules
+    """
+    if prune_layers is None:
+        prune_layers = PRUNE_LAYERS
+    
     # Load Qwen2 model in float16 on GPU
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_PATH,
@@ -70,7 +101,7 @@ def load_model_and_pruners():
 
     # Build pruning modules for selected layers
     pruning_modules = nn.ModuleDict(
-        {str(i): TokenPruningModule(hidden_size) for i in PRUNE_LAYERS}
+        {str(i): TokenPruningModule(hidden_size) for i in prune_layers}
     )
 
     # Load trained pruning weights from Stage2
@@ -93,16 +124,26 @@ def apply_token_pruning(
     hidden_states: torch.Tensor,
     pruning_module: nn.Module,
     keep_ratio: float,
-) -> tuple[torch.Tensor, torch.Tensor]:
+    min_head_tokens: int = None,
+    min_tail_tokens: int = None,
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
     """
     hidden_states: [1, seq_len, hidden]
     pruning_module: TokenPruningModule
     keep_ratio: fraction of tokens to keep
+    min_head_tokens: minimum tokens to keep at head (default: MIN_HEAD_TOKENS)
+    min_tail_tokens: minimum tokens to keep at tail (default: MIN_TAIL_TOKENS)
 
     Returns:
         pruned_hidden_states: [1, kept_len, hidden]
         index_tensor: [kept_len] indices kept
+        stats: dict with pruning statistics
     """
+    if min_head_tokens is None:
+        min_head_tokens = MIN_HEAD_TOKENS
+    if min_tail_tokens is None:
+        min_tail_tokens = MIN_TAIL_TOKENS
+    
     seq_len = hidden_states.size(1)
 
     # [seq_len, hidden]
@@ -111,9 +152,9 @@ def apply_token_pruning(
     # importance scores: [seq_len]
     scores = pruning_module(hs_flat)
 
-    # Always keep the first MIN_HEAD_TOKENS and last MIN_TAIL_TOKENS
-    base_keep = set(range(min(MIN_HEAD_TOKENS, seq_len)))
-    for i in range(max(0, seq_len - MIN_TAIL_TOKENS), seq_len):
+    # Always keep the first min_head_tokens and last min_tail_tokens
+    base_keep = set(range(min(min_head_tokens, seq_len)))
+    for i in range(max(0, seq_len - min_tail_tokens), seq_len):
         base_keep.add(i)
 
     # How many tokens to keep in total
@@ -140,7 +181,19 @@ def apply_token_pruning(
     )
     pruned_hidden = hidden_states[:, index_tensor, :]
 
-    return pruned_hidden, index_tensor
+    # Calculate statistics
+    tokens_kept = len(selected)
+    tokens_pruned = seq_len - tokens_kept
+    pruning_ratio = tokens_pruned / seq_len if seq_len > 0 else 0.0
+
+    stats = {
+        "tokens_kept": tokens_kept,
+        "tokens_pruned": tokens_pruned,
+        "pruning_ratio": pruning_ratio,
+        "original_length": seq_len,
+    }
+
+    return pruned_hidden, index_tensor, stats
 
 
 # ============================
@@ -152,7 +205,10 @@ def prefill_with_pruning(
     attention_mask: torch.Tensor,  # not used internally, kept for API symmetry
     pruning_modules: nn.ModuleDict,
     keep_ratio: float,
-) -> torch.Tensor:
+    prune_layers: list = None,
+    min_head_tokens: int = None,
+    min_tail_tokens: int = None,
+) -> tuple[torch.Tensor, dict]:
     """
     Manual forward over Transformer layers with token pruning applied
     at selected layers. Mirrors Stage2 training:
@@ -163,10 +219,29 @@ def prefill_with_pruning(
         * Call layer(hidden_states, position_ids=..., attention_mask=None).
         * Optionally prune tokens at this layer.
     - Apply final norm + lm_head to get logits.
+    
+    Returns:
+        logits: Model output logits
+        pruning_stats: Dict with aggregated pruning statistics
     """
+    if prune_layers is None:
+        prune_layers = PRUNE_LAYERS
+    if min_head_tokens is None:
+        min_head_tokens = MIN_HEAD_TOKENS
+    if min_tail_tokens is None:
+        min_tail_tokens = MIN_TAIL_TOKENS
 
     # Embed tokens: [1, seq_len, hidden]
     hidden_states = model.model.embed_tokens(input_ids)
+    original_length = hidden_states.size(1)
+    
+    # Track pruning statistics
+    pruning_stats = {
+        "total_pruning_steps": 0,
+        "total_tokens_pruned": 0,
+        "final_length": original_length,
+        "layer_stats": []
+    }
 
     for layer_idx, layer in enumerate(model.model.layers):
         # Build position ids: [1, seq_len]
@@ -187,18 +262,27 @@ def prefill_with_pruning(
         hidden_states = outputs[0]
 
         # Apply token pruning on selected layers
-        if layer_idx in PRUNE_LAYERS:
+        if layer_idx in prune_layers:
             pruner = pruning_modules[str(layer_idx)]
-            hidden_states, _ = apply_token_pruning(
+            hidden_states, _, stats = apply_token_pruning(
                 hidden_states,
                 pruner,
                 keep_ratio,
+                min_head_tokens,
+                min_tail_tokens,
             )
+            pruning_stats["total_pruning_steps"] += 1
+            pruning_stats["total_tokens_pruned"] += stats["tokens_pruned"]
+            pruning_stats["final_length"] = stats["tokens_kept"]
+            pruning_stats["layer_stats"].append({
+                "layer": layer_idx,
+                **stats
+            })
 
     # Final RMSNorm + LM head to get logits
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
-    return logits
+    return logits, pruning_stats
 
 
 # ============================
@@ -270,61 +354,187 @@ def build_dummy_input(tokenizer: AutoTokenizer, length: int):
 # ============================
 # Profiling
 # ============================
-def profile_lengths(lengths, keep_ratio: float, save_json: bool = True):
-    model, tokenizer, pruners = load_model_and_pruners()
+def get_hardware_info():
+    """Collect hardware information."""
+    info = {
+        "gpu_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+    }
+    
+    if torch.cuda.is_available():
+        info["gpu_model"] = torch.cuda.get_device_name(0)
+        info["gpu_memory_gb"] = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        info["cuda_version"] = torch.version.cuda
+    
+    return info
+
+
+def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True):
+    """
+    Profile baseline vs SDTP for given sequence lengths.
+    
+    Args:
+        lengths: List of sequence lengths to test
+        config_name: Configuration name ("keep09" or "keep07")
+        save_json: Whether to save results to JSON
+    """
+    # Select configuration
+    if config_name == "keep09":
+        config = KEEP09_CONFIG
+    else:
+        config = KEEP07_CONFIG
+    
+    print(f"[Config] Using {config_name} configuration:")
+    print(f"  Prune layers: {config['prune_layers']}")
+    print(f"  Keep ratio: {config['keep_ratio']}")
+    print(f"  Cumulative keep ratio: {config['cumulative_keep_ratio']:.4f}")
+    
+    # Load model with selected configuration
+    model, tokenizer, pruners = load_model_and_pruners(prune_layers=config["prune_layers"])
     model.eval()
 
     print("Profiling lengths:", lengths)
     
-    # Store results
-    baseline_results = {}
-    sdtp_results = {}
+    # Store results in new format
+    results_data = {
+        "metadata": {
+            "config_name": config_name,
+            "model": os.path.basename(MODEL_PATH),
+            "hardware": get_hardware_info(),
+            "pruning_config": {
+                "prune_layers": config["prune_layers"],
+                "keep_ratio": config["keep_ratio"],
+                "min_head_tokens": config["min_head_tokens"],
+                "min_tail_tokens": config["min_tail_tokens"],
+                "cumulative_keep_ratio": config["cumulative_keep_ratio"],
+            },
+            "run_info": {
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                "script": "inference_sdtp.py",
+                "mode": "profile",
+            }
+        },
+        "results": {},
+        "summary": {
+            "tested_lengths": [],
+            "avg_speedup": 0.0,
+            "avg_memory_reduction": 0.0,
+        }
+    }
+    
+    speedups = []
+    memory_reductions = []
     
     for L in lengths:
         # Build new input for each length
         input_ids, attention_mask = build_dummy_input(tokenizer, L)
 
         try:
+            # Reset memory tracking
+            if device.type == "cuda":
+                torch.cuda.reset_peak_memory_stats()
+            
             # Baseline: no pruning
             baseline_t = measure_latency(
                 lambda x, m: baseline_prefill(model, x, m),
                 input_ids,
                 attention_mask,
             )
+            
+            baseline_memory = 0.0
+            if device.type == "cuda":
+                baseline_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                torch.cuda.reset_peak_memory_stats()
 
             # SDTP: manual forward + pruning
+            def sdtp_fn(x, m):
+                logits, stats = prefill_with_pruning(
+                    model, x, m, pruners, 
+                    config["keep_ratio"],
+                    config["prune_layers"],
+                    config["min_head_tokens"],
+                    config["min_tail_tokens"],
+                )
+                return logits, stats
+            
             sdtp_t = measure_latency(
-                lambda x, m: prefill_with_pruning(
-                    model, x, m, pruners, keep_ratio
-                ),
+                lambda x, m: sdtp_fn(x, m)[0],  # Only measure latency, not stats
                 input_ids,
                 attention_mask,
             )
+            
+            # Get pruning stats from a separate run
+            _, pruning_stats = sdtp_fn(input_ids, attention_mask)
+            
+            sdtp_memory = 0.0
+            if device.type == "cuda":
+                sdtp_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
 
             speedup = baseline_t / sdtp_t if sdtp_t > 0 else float("inf")
+            memory_reduction = (baseline_memory - sdtp_memory) / baseline_memory if baseline_memory > 0 else 0.0
+            
             print(
-                f"[Length {L}] baseline={baseline_t:.4f}s  "
-                f"sdtp={sdtp_t:.4f}s  speedup={speedup:.2f}x"
+                f"[Length {L}] baseline={baseline_t:.4f}s ({baseline_memory:.2f}GB)  "
+                f"sdtp={sdtp_t:.4f}s ({sdtp_memory:.2f}GB)  "
+                f"speedup={speedup:.2f}x  memory_reduction={memory_reduction:.2%}"
             )
             
-            # Store results
-            baseline_results[str(L)] = baseline_t
-            sdtp_results[str(L)] = sdtp_t
+            # Store detailed results
+            results_data["results"][str(L)] = {
+                "baseline": {
+                    "latency_seconds": baseline_t,
+                    "memory_gb": baseline_memory,
+                },
+                "sdtp": {
+                    "latency_seconds": sdtp_t,
+                    "memory_gb": sdtp_memory,
+                    "tokens_kept": pruning_stats["final_length"],
+                    "tokens_pruned": pruning_stats["total_tokens_pruned"],
+                    "pruning_ratio": pruning_stats["total_tokens_pruned"] / L if L > 0 else 0.0,
+                    "pruning_steps": pruning_stats["total_pruning_steps"],
+                },
+                "speedup": speedup,
+                "memory_reduction": memory_reduction,
+            }
+            
+            speedups.append(speedup)
+            memory_reductions.append(memory_reduction)
+            results_data["summary"]["tested_lengths"].append(L)
 
         except torch.cuda.OutOfMemoryError:
             print(f"[Length {L}] OOM on GPU, skipping this length.")
+        except Exception as e:
+            print(f"[Length {L}] Error: {e}")
         finally:
             # Explicitly free tensors and clear cache to avoid accumulation
-            del input_ids, attention_mask
+            if 'input_ids' in locals():
+                del input_ids, attention_mask
             if device.type == "cuda":
                 torch.cuda.empty_cache()
     
+    # Calculate summary statistics
+    if speedups:
+        results_data["summary"]["avg_speedup"] = sum(speedups) / len(speedups)
+    if memory_reductions:
+        results_data["summary"]["avg_memory_reduction"] = sum(memory_reductions) / len(memory_reductions)
+    
     # Save results to JSON
-    if save_json and baseline_results and sdtp_results:
+    if save_json and results_data["results"]:
         os.makedirs("results", exist_ok=True)
         
-        baseline_path = "results/latency_baseline.json"
-        sdtp_path = "results/latency_sdtp.json"
+        # Save combined results (new format)
+        combined_path = f"results/latency_results_{config_name}.json"
+        with open(combined_path, "w") as f:
+            json.dump(results_data, f, indent=2)
+        print(f"[OK] Results saved to {combined_path}")
+        
+        # Also save backward-compatible separate files
+        baseline_results = {k: v["baseline"]["latency_seconds"] 
+                           for k, v in results_data["results"].items()}
+        sdtp_results = {k: v["sdtp"]["latency_seconds"] 
+                       for k, v in results_data["results"].items()}
+        
+        baseline_path = f"results/latency_baseline_{config_name}.json"
+        sdtp_path = f"results/latency_sdtp_{config_name}.json"
         
         with open(baseline_path, "w") as f:
             json.dump(baseline_results, f, indent=2)
@@ -374,7 +584,14 @@ def parse_args():
     parser.add_argument(
         "--keep_ratio",
         type=float,
-        default=KEEP_RATIO,
+        default=None,
+        help="Token keep ratio for pruning (overrides config if set)",
+    )
+    parser.add_argument(
+        "--config",
+        choices=["keep09", "keep07"],
+        default="keep07",
+        help="Configuration preset: keep09 (0.9 keep ratio) or keep07 (0.7 keep ratio)",
     )
     return parser.parse_args()
 
@@ -383,7 +600,7 @@ def main():
     args = parse_args()
 
     if args.mode == "profile":
-        profile_lengths(args.lengths, args.keep_ratio)
+        profile_lengths(args.lengths, config_name=args.config)
 
     elif args.mode == "generate":
         model, tokenizer, _ = load_model_and_pruners()

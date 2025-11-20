@@ -10,14 +10,43 @@ import os
 
 
 def load_json(path):
-    """Load JSON file and convert keys to integers"""
+    """
+    Load JSON file and extract latency data.
+    Supports both old format ({length: latency}) and new format (with metadata/results).
+    
+    Returns:
+        dict: {length: latency} mapping
+        dict: Metadata if available (new format), None otherwise
+    """
     if not os.path.exists(path):
         print(f"[Warning] File not found: {path}")
-        return {}
+        return {}, None
     
     with open(path, 'r') as f:
         data = json.load(f)
-        return {int(k): float(v) for k, v in data.items()}
+    
+    # Check if it's new format (has 'results' or 'metadata' key)
+    if "results" in data:
+        # New format: extract latency from results
+        latency_data = {}
+        for length_str, result in data["results"].items():
+            if isinstance(result, dict) and "baseline" in result:
+                # Combined format: extract baseline latency
+                latency_data[int(length_str)] = result["baseline"]["latency_seconds"]
+            elif isinstance(result, dict) and "latency_seconds" in result:
+                # Separate baseline/sdtp format
+                latency_data[int(length_str)] = result["latency_seconds"]
+            else:
+                # Fallback: assume it's a number
+                latency_data[int(length_str)] = float(result)
+        metadata = data.get("metadata", None)
+        return latency_data, metadata
+    elif "metadata" in data:
+        # New format but only metadata (shouldn't happen, but handle it)
+        return {}, data.get("metadata", None)
+    else:
+        # Old format: simple {length: latency}
+        return {int(k): float(v) for k, v in data.items()}, None
 
 
 def plot_latency(baseline, sdtp, out_path):
@@ -174,6 +203,39 @@ def plot_flops(baseline, sdtp, out_path, keep_ratio=0.7):
     print(f"[Info] Average FLOPs reduction: {np.mean(reduction):.1f}%")
 
 
+def load_combined_json(path):
+    """
+    Load combined JSON file (new format with both baseline and SDTP).
+    
+    Returns:
+        tuple: (baseline_dict, sdtp_dict, metadata)
+    """
+    if not os.path.exists(path):
+        print(f"[Warning] File not found: {path}")
+        return {}, {}, None
+    
+    with open(path, 'r') as f:
+        data = json.load(f)
+    
+    if "results" not in data:
+        print(f"[Warning] Invalid format in {path}, expected 'results' key")
+        return {}, {}, None
+    
+    baseline = {}
+    sdtp = {}
+    
+    for length_str, result in data["results"].items():
+        length = int(length_str)
+        if isinstance(result, dict):
+            if "baseline" in result:
+                baseline[length] = result["baseline"]["latency_seconds"]
+            if "sdtp" in result:
+                sdtp[length] = result["sdtp"]["latency_seconds"]
+    
+    metadata = data.get("metadata", None)
+    return baseline, sdtp, metadata
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Generate latency curves for SDTP evaluation"
@@ -181,14 +243,20 @@ def main():
     parser.add_argument(
         "--baseline", 
         type=str, 
-        default="results/latency_baseline.json",
-        help="Path to baseline latency JSON file"
+        default=None,
+        help="Path to baseline latency JSON file (old format or separate file)"
     )
     parser.add_argument(
         "--sdtp", 
         type=str, 
-        default="results/latency_sdtp.json",
-        help="Path to SDTP latency JSON file"
+        default=None,
+        help="Path to SDTP latency JSON file (old format or separate file)"
+    )
+    parser.add_argument(
+        "--combined",
+        type=str,
+        default=None,
+        help="Path to combined results JSON file (new format with both baseline and SDTP)"
     )
     parser.add_argument(
         "--out_dir", 
@@ -199,8 +267,8 @@ def main():
     parser.add_argument(
         "--keep_ratio",
         type=float,
-        default=0.7,
-        help="Token keep ratio for FLOPs estimation"
+        default=None,
+        help="Token keep ratio for FLOPs estimation (auto-detect from metadata if not set)"
     )
     parser.add_argument(
         "--prefix",
@@ -211,12 +279,34 @@ def main():
     
     args = parser.parse_args()
     
-    # Load data
-    print(f"[Loading] Baseline: {args.baseline}")
-    baseline = load_json(args.baseline)
+    # Load data - support both old and new formats
+    baseline = {}
+    sdtp = {}
+    metadata = None
     
-    print(f"[Loading] SDTP: {args.sdtp}")
-    sdtp = load_json(args.sdtp)
+    if args.combined:
+        # New format: load from combined file
+        print(f"[Loading] Combined results: {args.combined}")
+        baseline, sdtp, metadata = load_combined_json(args.combined)
+        if metadata and args.keep_ratio is None:
+            # Auto-detect keep_ratio from metadata
+            args.keep_ratio = metadata.get("pruning_config", {}).get("keep_ratio", 0.7)
+    else:
+        # Old format: load separate files
+        if args.baseline is None:
+            args.baseline = "results/latency_baseline.json"
+        if args.sdtp is None:
+            args.sdtp = "results/latency_sdtp.json"
+        
+        print(f"[Loading] Baseline: {args.baseline}")
+        baseline, baseline_meta = load_json(args.baseline)
+        
+        print(f"[Loading] SDTP: {args.sdtp}")
+        sdtp, sdtp_meta = load_json(args.sdtp)
+        
+        metadata = baseline_meta or sdtp_meta
+        if metadata and args.keep_ratio is None:
+            args.keep_ratio = metadata.get("pruning_config", {}).get("keep_ratio", 0.7)
     
     if not baseline:
         print("[Error] Baseline data is empty")
@@ -226,7 +316,13 @@ def main():
         print("[Error] SDTP data is empty")
         return
     
+    if args.keep_ratio is None:
+        args.keep_ratio = 0.7  # Default fallback
+    
     print(f"[Info] Found {len(baseline)} baseline points, {len(sdtp)} SDTP points")
+    if metadata:
+        config_name = metadata.get("config_name", "unknown")
+        print(f"[Info] Configuration: {config_name}")
     
     # Generate plots with optional prefix
     prefix = f"{args.prefix}_" if args.prefix else ""
