@@ -4,6 +4,7 @@ import argparse
 import time
 import json
 import os
+from typing import Tuple, Dict
 
 import torch
 import torch.nn as nn
@@ -134,7 +135,7 @@ def apply_token_pruning(
     keep_ratio: float,
     min_head_tokens: int = None,
     min_tail_ratio: float = None,
-) -> tuple[torch.Tensor, torch.Tensor, dict]:
+) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
     """
     hidden_states: [1, seq_len, hidden]
     pruning_module: TokenPruningModule
@@ -217,7 +218,7 @@ def prefill_with_pruning(
     prune_layers: list = None,
     min_head_tokens: int = None,
     min_tail_ratio: float = None,
-) -> tuple[torch.Tensor, dict]:
+) -> Tuple[torch.Tensor, Dict]:
     """
     Manual forward over Transformer layers with token pruning applied
     at selected layers. Mirrors Stage2 training:

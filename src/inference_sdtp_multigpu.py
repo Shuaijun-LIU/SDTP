@@ -263,10 +263,10 @@ def profile_lengths(lengths, keep_ratio, save_json: bool = True):
 
             # Test baseline
             try:
-                baseline_t = measure_latency(
-                    lambda x, m: baseline_prefill(model, x, m),
-                    input_ids, attention_mask
-                )
+            baseline_t = measure_latency(
+                lambda x, m: baseline_prefill(model, x, m),
+                input_ids, attention_mask
+            )
                 baseline_results[str(L)] = baseline_t
                 print(f"[Length {L}] baseline={baseline_t:.4f}s")
             except Exception as e:
@@ -274,10 +274,10 @@ def profile_lengths(lengths, keep_ratio, save_json: bool = True):
             
             # Test SDTP
             try:
-                sdtp_t = measure_latency(
-                    lambda x, m: prefill_with_pruning(model, x, m, pruners, keep_ratio),
-                    input_ids, attention_mask
-                )
+            sdtp_t = measure_latency(
+                lambda x, m: prefill_with_pruning(model, x, m, pruners, keep_ratio),
+                input_ids, attention_mask
+            )
                 sdtp_results[str(L)] = sdtp_t
                 print(f"[Length {L}] sdtp={sdtp_t:.4f}s")
                 
@@ -297,7 +297,7 @@ def profile_lengths(lengths, keep_ratio, save_json: bool = True):
             traceback.print_exc()
         finally:
             if input_ids is not None:
-                del input_ids, attention_mask
+            del input_ids, attention_mask
             torch.cuda.empty_cache()
     
     # Save results to JSON
@@ -309,17 +309,17 @@ def profile_lengths(lengths, keep_ratio, save_json: bool = True):
         
         # Save baseline results if available
         if baseline_results:
-            with open(baseline_path, "w") as f:
-                json.dump(baseline_results, f, indent=2)
-            print(f"[OK] Baseline results saved to {baseline_path}")
+        with open(baseline_path, "w") as f:
+            json.dump(baseline_results, f, indent=2)
+        print(f"[OK] Baseline results saved to {baseline_path}")
         else:
             print(f"[Warning] No baseline results to save")
         
         # Save SDTP results if available
         if sdtp_results:
-            with open(sdtp_path, "w") as f:
-                json.dump(sdtp_results, f, indent=2)
-            print(f"[OK] SDTP results saved to {sdtp_path}")
+        with open(sdtp_path, "w") as f:
+            json.dump(sdtp_results, f, indent=2)
+        print(f"[OK] SDTP results saved to {sdtp_path}")
         else:
             print(f"[Warning] No SDTP results to save (all tests may have failed)")
 
