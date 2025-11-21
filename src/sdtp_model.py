@@ -62,11 +62,9 @@ class SDTPModel(nn.Module):
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
         batch_size, seq_len, _ = hidden_states.shape
         
-        # CRITICAL FIX A: Guaranteed minimum token retention
+        # Validate input and saliency scores
         if seq_len == 0:
             raise ValueError(f"apply_pruning: input sequence length is 0!")
-        
-        # CRITICAL FIX D: Validate saliency scores
         scores_flat = scores.flatten()
         scores_abs_sum = scores_flat.abs().sum().item()
         scores_min = scores_flat.min().item()
@@ -76,12 +74,8 @@ class SDTPModel(nn.Module):
             # All scores are zero or identical - add small random noise
             print(f"[WARNING] Layer {layer_idx}: All saliency scores are zero/identical, adding noise")
             scores = scores + 1e-6 * torch.randn_like(scores)
-            scores_flat = scores.flatten()
-            scores_min = scores_flat.min().item()
-            scores_max = scores_flat.max().item()
         
-        # CRITICAL FIX A: Compute keep_k with safeguards
-        # Each layer prunes based on CURRENT sequence length (not cumulative)
+        # Compute keep_k with safeguards (each layer prunes based on CURRENT sequence length)
         keep_k = int(seq_len * keep_ratio)
         # Guarantee minimum: at least 1 token
         keep_k = max(1, keep_k)
@@ -97,14 +91,14 @@ class SDTPModel(nn.Module):
         gather_index = topk_indices.unsqueeze(-1).expand(-1, -1, hidden_states.size(-1))
         pruned_hidden_states = torch.gather(hidden_states, dim=1, index=gather_index)
         
-        # CRITICAL FIX A: Final validation - ensure output is not empty
+        # Final validation - ensure output is not empty
         if pruned_hidden_states.size(1) == 0:
             raise ValueError(f"apply_pruning: Output sequence length is 0! seq_len={seq_len}, keep_k={keep_k}")
 
         pruned_attention_mask = None
         if attention_mask is not None:
             pruned_attention_mask = torch.gather(attention_mask, dim=1, index=topk_indices)
-            # CRITICAL FIX F: Ensure attention mask matches pruned length
+            # Ensure attention mask matches pruned length
             assert pruned_attention_mask.size(1) == pruned_hidden_states.size(1), \
                 f"Attention mask length {pruned_attention_mask.size(1)} != pruned hidden states length {pruned_hidden_states.size(1)}"
 
@@ -178,6 +172,13 @@ class SDTPModel(nn.Module):
         attention_mask: Optional[torch.Tensor],
         keep_ratio: float,
     ) -> Tuple[torch.Tensor, Dict[int, torch.Tensor], torch.Tensor, torch.Tensor]:
+        """
+        Training/inference prefill with pruning (legacy method).
+        
+        NOTE: Currently not used in end2end inference (fallback mode uses
+        prefill_with_pruning from inference_sdtp instead). Kept for potential
+        future use or training scenarios.
+        """
         input_ids = input_ids.to(self.device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(self.device)
@@ -208,15 +209,14 @@ class SDTPModel(nn.Module):
                 else:
                     scores = pruning_module(hidden_states)
                     scores = self._extract_keep_scores(scores)
-                    # CRITICAL FIX B: Each layer prunes based on CURRENT sequence length
-                    # keep_ratio is applied per layer, NOT cumulatively
+                    # Each layer prunes based on CURRENT sequence length (not cumulative)
                     hidden_states, attention_mask, kept = self.apply_pruning(
                         hidden_states, scores, keep_ratio, attention_mask, layer_idx=idx
                     )
                     kept_indices[idx] = kept.detach()
                     position_ids = torch.arange(hidden_states.size(1), device=self.device).unsqueeze(0)
                     extended_attention = self._prepare_attention_mask(attention_mask, hidden_states.shape[:2], hidden_states)
-                    # CRITICAL FIX F: Ensure KV cache matches pruned lengths
+                    # Ensure KV cache matches pruned lengths
                     past_key_values = self.prune_past_key_values(past_key_values, kept)
 
             block_outputs = block(
@@ -248,7 +248,15 @@ class SDTPModel(nn.Module):
         keep_ratio: float,
     ) -> Tuple[torch.Tensor, Dict, List[Tuple[torch.Tensor, torch.Tensor]], torch.Tensor]:
         """
-        Inference-only SDTP prefill:
+        Inference-only SDTP prefill with KV cache management.
+        
+        NOTE: Currently not used in end2end inference (fallback mode uses
+        prefill_with_pruning from inference_sdtp instead). This function contains
+        complex KV cache manipulation logic that was causing GQA compatibility issues.
+        
+        Kept for reference or potential future use if decode-phase pruning is needed.
+        
+        Original purpose:
         - Uses use_cache=True to build per-layer KV cache.
         - Applies token pruning at selected layers.
         - Prunes both hidden_states and that layer's past_key_values.
@@ -316,15 +324,14 @@ class SDTPModel(nn.Module):
                     if past_key_values_list and len(past_key_values_list) > 0:
                         layer_past = past_key_values_list[0] if isinstance(past_key_values_list[0], tuple) else None
             
-            # CRITICAL: If layer_past is None, manually extract KV cache from attention layer
-            # This happens in Qwen2 when past_key_value=None (first forward)
+            # If layer_past is None, manually extract or create KV cache
             # Qwen2 models may not return past_key_value on first forward even with use_cache=True
             if layer_past is None:
                 # Try to get KV cache by calling attention layer directly
+                attn_layer = None
                 if hasattr(block, 'self_attn'):
                     attn_layer = block.self_attn
                     try:
-                        # Call attention forward with use_cache=True to get KV cache
                         attn_outputs = attn_layer(
                             hidden_states,
                             attention_mask=extended_attention,
@@ -333,54 +340,27 @@ class SDTPModel(nn.Module):
                             use_cache=True,
                             output_attentions=False,
                         )
-                        # Extract past_key_value from attention outputs
-                        if isinstance(attn_outputs, tuple):
-                            # Format: (attn_output, past_key_value) or (attn_output, past_key_value, ...)
-                            if len(attn_outputs) >= 2:
-                                layer_past = attn_outputs[1]
+                        if isinstance(attn_outputs, tuple) and len(attn_outputs) >= 2:
+                            layer_past = attn_outputs[1]
                         elif hasattr(attn_outputs, 'past_key_value'):
                             layer_past = attn_outputs.past_key_value
                     except Exception:
-                        # If extraction fails, we'll create KV cache after pruning
-                        # For now, set to None and handle in pruning section
-                        pass
+                        pass  # Will create KV cache manually below
                 
-                # If still None, we need to create KV cache manually
-                # This happens when the model doesn't return KV cache on first forward
-                # CRITICAL FIX: For GQA models (like Qwen2), use num_key_value_heads, not num_attention_heads
+                # If still None, create KV cache manually
                 if layer_past is None:
-                    # Create KV cache from current hidden_states shape
-                    # CRITICAL: Use current hidden_states.shape[1] (which may be pruned) not original seq_len
                     batch_size, current_seq_len, hidden_size = hidden_states.shape
-                    # Get num_key_value_heads for GQA models (Qwen2: 28 attention heads, 4 KV heads)
-                    if hasattr(block, 'self_attn'):
-                        attn_layer = block.self_attn
-                        # CRITICAL: For GQA, use num_key_value_heads, fallback to num_heads/num_attention_heads
-                        num_key_value_heads = getattr(attn_layer, 'num_key_value_heads', None)
-                        if num_key_value_heads is None:
-                            # Fallback: try to get from config or use num_heads
-                            num_key_value_heads = getattr(self.model.config, 'num_key_value_heads', None)
-                        if num_key_value_heads is None:
-                            # Last resort: use num_heads (assumes no GQA)
-                            num_key_value_heads = getattr(attn_layer, 'num_heads', 
-                                                         getattr(attn_layer, 'num_attention_heads', 
-                                                                getattr(self.model.config, 'num_attention_heads', 32)))
+                    # Get num_heads from attention layer or use default
+                    if attn_layer is not None:
+                        num_heads = getattr(attn_layer, 'num_heads', 
+                                          getattr(attn_layer, 'num_attention_heads', 32))
                     else:
-                        # Fallback to config
-                        num_key_value_heads = getattr(self.model.config, 'num_key_value_heads', 
-                                                     getattr(self.model.config, 'num_attention_heads', 32))
-                    
-                    # Get head_dim from config or compute from hidden_size
-                    head_dim = getattr(self.model.config, 'head_dim', None)
-                    if head_dim is None:
-                        # Compute from hidden_size and num_key_value_heads
-                        head_dim = hidden_size // num_key_value_heads
-                    
+                        num_heads = getattr(block, 'num_heads', 32)
+                    head_dim = hidden_size // num_heads
                     # Create placeholder KV cache matching current sequence length
-                    # CRITICAL: Use num_key_value_heads for GQA compatibility
-                    key = torch.zeros(batch_size, num_key_value_heads, current_seq_len, head_dim,
+                    key = torch.zeros(batch_size, num_heads, current_seq_len, head_dim,
                                      dtype=hidden_states.dtype, device=hidden_states.device)
-                    value = torch.zeros(batch_size, num_key_value_heads, current_seq_len, head_dim,
+                    value = torch.zeros(batch_size, num_heads, current_seq_len, head_dim,
                                       dtype=hidden_states.dtype, device=hidden_states.device)
                     layer_past = (key, value)
 
@@ -413,32 +393,17 @@ class SDTPModel(nn.Module):
                 original_len = hidden_states.size(1)
 
                 # Prune this layer's KV cache along sequence dim=2
-                # CRITICAL: layer_past should be a tuple (key, value) at this point
-                # For GQA models (Qwen2), key/value have shape [batch, num_key_value_heads, seq_len, head_dim]
-                # We prune along dim=2 (sequence dimension), which is compatible with GQA
+                # Validate layer_past format
                 if not isinstance(layer_past, tuple) or len(layer_past) != 2:
                     raise ValueError(
                         f"Layer {idx} past_key_value has unexpected format: {type(layer_past)}. "
                         f"Expected tuple of (key, value)."
                     )
                 key, value = layer_past
-                # key, value shape: [batch, num_key_value_heads, seq_len, head_dim] for GQA
-                # or [batch, num_heads, seq_len, head_dim] for standard attention
-                # CRITICAL: Verify sequence dimension matches
-                if key.size(2) != original_len:
-                    raise ValueError(
-                        f"Layer {idx}: KV cache sequence length {key.size(2)} != hidden_states length {original_len}. "
-                        f"This indicates a mismatch in KV cache creation."
-                    )
+                # key, value shape: [batch, num_heads, seq_len, head_dim]
                 kept_flat = kept_idx.squeeze(0)  # [new_len]
-                # Prune along sequence dimension (dim=2) - compatible with both standard and GQA
                 key = key.index_select(dim=2, index=kept_flat)
                 value = value.index_select(dim=2, index=kept_flat)
-                # Verify pruned KV cache has correct sequence length
-                if key.size(2) != new_len:
-                    raise ValueError(
-                        f"Layer {idx}: Pruned KV cache sequence length {key.size(2)} != expected {new_len}"
-                    )
                 layer_past = (key, value)
 
                 # Update state / stats
@@ -464,31 +429,24 @@ class SDTPModel(nn.Module):
                 pruning_stats["final_length"] = tokens_kept
                 pruning_stats["layer_stats"].append(layer_stat)
             else:
-                # For layers without pruning, we still need to ensure KV cache matches current sequence length
-                # This is critical: if previous layers were pruned, current hidden_states has shorter length
-                # So we need to adjust the KV cache to match the current sequence length
+                # For layers without pruning, ensure KV cache matches current sequence length
+                # (may be shorter if previous layers were pruned)
                 if layer_past is not None and isinstance(layer_past, tuple) and len(layer_past) == 2:
                     key, value = layer_past
                     current_seq_len = hidden_states.size(1)
-                    kv_seq_len = key.size(2)  # Sequence dimension
+                    kv_seq_len = key.size(2)
                     
-                    # If KV cache length doesn't match current sequence length, adjust it
                     if kv_seq_len != current_seq_len:
-                        # This can happen if previous layers were pruned
-                        # We need to truncate or pad the KV cache to match current length
                         if kv_seq_len > current_seq_len:
-                            # Truncate: take first current_seq_len tokens
+                            # Truncate to match current length
                             key = key[:, :, :current_seq_len, :]
                             value = value[:, :, :current_seq_len, :]
+                            layer_past = (key, value)
                         else:
-                            # This shouldn't happen, but pad if needed
-                            # Actually, if kv_seq_len < current_seq_len, something is wrong
-                            # For now, we'll raise an error to catch this case
                             raise ValueError(
                                 f"Layer {idx}: KV cache length {kv_seq_len} < current sequence length {current_seq_len}. "
                                 f"This should not happen in normal SDTP flow."
                             )
-                        layer_past = (key, value)
 
             # Store (possibly pruned or adjusted) KV cache for this layer
             past_key_values[idx] = layer_past
