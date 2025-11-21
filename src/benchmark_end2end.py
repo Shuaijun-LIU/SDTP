@@ -22,7 +22,6 @@ try:
         build_dummy_input,
         device,
     )
-    from sdtp_model import SDTPModel
 except ImportError:
     # Fallback if running as standalone
     import sys
@@ -40,7 +39,6 @@ except ImportError:
         build_dummy_input,
         device,
     )
-    from sdtp_model import SDTPModel
 
 MAX_NEW_TOKENS = 128  # Generate 128 tokens as in paper
 
@@ -178,17 +176,9 @@ def run_end2end_sdtp(
     device = input_ids.device
     model.eval()
 
-    # Wrap base model and tokenizer with SDTPModel to reuse inference utilities
-    sdtp = SDTPModel(
-        model=model,
-        tokenizer=tokenizer,
-        device=device,
-    )
-
-    # Attach pruning modules
-    for name, module in pruning_modules.items():
-        layer_idx = int(name)
-        sdtp.attach_pruning_module(layer_idx, module)
+    # Note: We use prefill_with_pruning from inference_sdtp directly,
+    # which doesn't require SDTPModel wrapper. The pruning_modules
+    # are passed directly to prefill_with_pruning.
 
     with torch.no_grad():
         # ============================================
