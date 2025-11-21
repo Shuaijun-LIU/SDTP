@@ -229,29 +229,31 @@ def run_end2end_sdtp(
         prefill_end = time.perf_counter()
         prefill_time = prefill_end - prefill_start
         
-        # Get first token from prefill logits
-        next_token_logits = logits[:, -1, :]
-        next_token_id = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        # Note: After prefill_with_pruning, we cannot directly use model.generate()
+        # with the concatenated input_ids + first_token because prefill_with_pruning
+        # is a manual forward that doesn't create KV cache (past_key_values).
+        # When model.generate() is called, it will redo the prefill phase, which
+        # expects the original input length, not input_length + 1.
+        #
+        # Solution: Use standard generation from the original input_ids.
+        # This measures decode time on the full sequence (not pruned), which is
+        # a limitation but necessary given the current implementation.
+        # In a full SDTP implementation, we would need to:
+        # 1. Modify prefill_with_pruning to return past_key_values, OR
+        # 2. Track pruned indices and reconstruct the correct input for generation
         
-        # Concatenate input with first generated token
-        generated_ids = torch.cat([input_ids, next_token_id], dim=-1)
-        
-        # Note: After prefill with pruning, we need to generate with the pruned sequence
-        # However, HuggingFace generate() expects full input_ids
-        # For now, we use the original input_ids but the KV cache will be smaller
-        # This is a limitation - in full implementation, we'd need to track pruned indices
-        
-        # Measure decode time
+        # Measure decode time using standard generation from original input
         if device.type == "cuda":
             torch.cuda.synchronize()
         decode_start = time.perf_counter()
         
-        # Generate remaining tokens using standard generation
-        # The KV cache will be based on the pruned sequence from prefill
+        # Generate tokens using standard generation
+        # We use original input_ids (not concatenated with first token) because
+        # model.generate() will redo prefill and expects the original length
         generated = model.generate(
-            input_ids=generated_ids,
-            attention_mask=torch.ones_like(generated_ids),
-            max_new_tokens=max_new_tokens - 1,  # -1 because we already generated one
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
             do_sample=False,
             use_cache=True,
         )
