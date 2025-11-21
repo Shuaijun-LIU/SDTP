@@ -2,7 +2,7 @@
   "task": "data/LongBench_data/hotpotqa.json",
   "num_total": 200,
   "num_eval": 200,
-  "hit_rate": 0.32,
+  "hit_rate": 0.320,
   "model": "checkpoints/qwen2-7b-instruct",
   "mode": "sdtp",
   "keep_ratio": 0.9,
