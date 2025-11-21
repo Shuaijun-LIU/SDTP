@@ -10,6 +10,12 @@ import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
+# Import end2end benchmarking
+try:
+    from benchmark_end2end import run_end2end_latency
+except ImportError:
+    run_end2end_latency = None
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ============================
@@ -384,7 +390,7 @@ def get_hardware_info():
     return info
 
 
-def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True):
+def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True, benchmark_mode: str = "prefill"):
     """
     Profile baseline vs SDTP for given sequence lengths.
     
@@ -392,6 +398,7 @@ def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True
         lengths: List of sequence lengths to test
         config_name: Configuration name ("keep09", "keep08", or "keep07")
         save_json: Whether to save results to JSON
+        benchmark_mode: "prefill" for prefill-only, "end2end" for full E2E
     """
     # Select configuration
     if config_name == "keep09":
@@ -429,6 +436,7 @@ def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True
                 "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
                 "script": "inference_sdtp.py",
                 "mode": "profile",
+                "benchmark_mode": benchmark_mode,
             }
         },
         "results": {},
@@ -447,76 +455,181 @@ def profile_lengths(lengths, config_name: str = "keep07", save_json: bool = True
         input_ids, attention_mask = build_dummy_input(tokenizer, L)
 
         try:
-            # Reset memory tracking
-            if device.type == "cuda":
-                torch.cuda.reset_peak_memory_stats()
-            
-            # Baseline: no pruning
-            baseline_t = measure_latency(
-                lambda x, m: baseline_prefill(model, x, m),
-                input_ids,
-                attention_mask,
-            )
-            
-            baseline_memory = 0.0
-            if device.type == "cuda":
-                baseline_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
-                torch.cuda.reset_peak_memory_stats()
-
-            # SDTP: manual forward + pruning
-            def sdtp_fn(x, m):
-                logits, stats = prefill_with_pruning(
-                    model, x, m, pruners, 
-                    config["keep_ratio"],
-                    config["prune_layers"],
-                    config["min_head_tokens"],
-                    config["min_tail_ratio"],
+            if benchmark_mode == "end2end":
+                # End2End benchmarking
+                if run_end2end_latency is None:
+                    raise ImportError("benchmark_end2end module not found. Cannot run end2end benchmark.")
+                
+                # Reset memory tracking
+                if device.type == "cuda":
+                    torch.cuda.reset_peak_memory_stats()
+                
+                # Baseline End2End
+                baseline_result = run_end2end_latency(
+                    model, tokenizer, input_ids, attention_mask,
+                    use_sdtp=False,
                 )
-                return logits, stats
-            
-            sdtp_t = measure_latency(
-                lambda x, m: sdtp_fn(x, m)[0],  # Only measure latency, not stats
-                input_ids,
-                attention_mask,
-            )
-            
-            # Get pruning stats from a separate run
-            _, pruning_stats = sdtp_fn(input_ids, attention_mask)
-            
-            sdtp_memory = 0.0
-            if device.type == "cuda":
-                sdtp_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                baseline_prefill_t = baseline_result["prefill_time"]
+                baseline_decode_t = baseline_result["decode_time"]
+                baseline_total_t = baseline_result["total_time"]
+                baseline_kv_lens = baseline_result["kv_lens_after_prefill"]
+                
+                baseline_memory = 0.0
+                if device.type == "cuda":
+                    baseline_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                    torch.cuda.reset_peak_memory_stats()
+                
+                # SDTP End2End
+                sdtp_result = run_end2end_latency(
+                    model, tokenizer, input_ids, attention_mask,
+                    use_sdtp=True,
+                    pruning_modules=pruners,
+                    keep_ratio=config["keep_ratio"],
+                    prune_layers=config["prune_layers"],
+                )
+                sdtp_prefill_t = sdtp_result["prefill_time"]
+                sdtp_decode_t = sdtp_result["decode_time"]
+                sdtp_total_t = sdtp_result["total_time"]
+                sdtp_kv_lens = sdtp_result["kv_lens_after_prefill"]
+                pruning_stats = sdtp_result.get("pruning_stats", {})
+                
+                sdtp_memory = 0.0
+                if device.type == "cuda":
+                    sdtp_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                
+                # Calculate speedups
+                prefill_speedup = baseline_prefill_t / sdtp_prefill_t if sdtp_prefill_t > 0 else float("inf")
+                decode_speedup = baseline_decode_t / sdtp_decode_t if sdtp_decode_t > 0 else float("inf")
+                total_speedup = baseline_total_t / sdtp_total_t if sdtp_total_t > 0 else float("inf")
+                
+                # Calculate KV cache reduction
+                if baseline_kv_lens and sdtp_kv_lens:
+                    baseline_kv_avg = sum(baseline_kv_lens) / len(baseline_kv_lens) if baseline_kv_lens else L
+                    sdtp_kv_avg = sum(sdtp_kv_lens) / len(sdtp_kv_lens) if sdtp_kv_lens else L
+                    kv_reduction = (baseline_kv_avg - sdtp_kv_avg) / baseline_kv_avg if baseline_kv_avg > 0 else 0.0
+                else:
+                    kv_reduction = 0.0
+                
+                memory_reduction = (baseline_memory - sdtp_memory) / baseline_memory if baseline_memory > 0 else 0.0
+                
+                print(
+                    f"[Length {L}] End2End Results:\n"
+                    f"  Baseline: prefill={baseline_prefill_t:.4f}s, decode={baseline_decode_t:.4f}s, "
+                    f"total={baseline_total_t:.4f}s\n"
+                    f"  SDTP:     prefill={sdtp_prefill_t:.4f}s, decode={sdtp_decode_t:.4f}s, "
+                    f"total={sdtp_total_t:.4f}s\n"
+                    f"  Speedup:  prefill={prefill_speedup:.2f}x, decode={decode_speedup:.2f}x, "
+                    f"total={total_speedup:.2f}x\n"
+                    f"  KV Cache: baseline={baseline_kv_lens[0] if baseline_kv_lens else L}, "
+                    f"sdtp={sdtp_kv_lens[0] if sdtp_kv_lens else L}, "
+                    f"reduction={kv_reduction:.2%}"
+                )
+                
+                # Store detailed results
+                results_data["results"][str(L)] = {
+                    "baseline": {
+                        "prefill_latency_seconds": baseline_prefill_t,
+                        "decode_latency_seconds": baseline_decode_t,
+                        "total_latency_seconds": baseline_total_t,
+                        "memory_gb": baseline_memory,
+                        "kv_lens_after_prefill": baseline_kv_lens,
+                    },
+                    "sdtp": {
+                        "prefill_latency_seconds": sdtp_prefill_t,
+                        "decode_latency_seconds": sdtp_decode_t,
+                        "total_latency_seconds": sdtp_total_t,
+                        "memory_gb": sdtp_memory,
+                        "kv_lens_after_prefill": sdtp_kv_lens,
+                        "tokens_kept": pruning_stats.get("final_length", L),
+                        "tokens_pruned": pruning_stats.get("total_tokens_pruned", 0),
+                        "pruning_ratio": pruning_stats.get("total_tokens_pruned", 0) / L if L > 0 else 0.0,
+                        "pruning_steps": pruning_stats.get("total_pruning_steps", 0),
+                    },
+                    "speedup": {
+                        "prefill": prefill_speedup,
+                        "decode": decode_speedup,
+                        "total": total_speedup,
+                    },
+                    "kv_reduction": kv_reduction,
+                    "memory_reduction": memory_reduction,
+                }
+                
+                speedups.append(total_speedup)
+                memory_reductions.append(memory_reduction)
+                results_data["summary"]["tested_lengths"].append(L)
+                
+            else:
+                # Prefill-only benchmarking (original behavior)
+                # Reset memory tracking
+                if device.type == "cuda":
+                    torch.cuda.reset_peak_memory_stats()
+                
+                # Baseline: no pruning
+                baseline_t = measure_latency(
+                    lambda x, m: baseline_prefill(model, x, m),
+                    input_ids,
+                    attention_mask,
+                )
+                
+                baseline_memory = 0.0
+                if device.type == "cuda":
+                    baseline_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+                    torch.cuda.reset_peak_memory_stats()
 
-            speedup = baseline_t / sdtp_t if sdtp_t > 0 else float("inf")
-            memory_reduction = (baseline_memory - sdtp_memory) / baseline_memory if baseline_memory > 0 else 0.0
-            
-            print(
-                f"[Length {L}] baseline={baseline_t:.4f}s ({baseline_memory:.2f}GB)  "
-                f"sdtp={sdtp_t:.4f}s ({sdtp_memory:.2f}GB)  "
-                f"speedup={speedup:.2f}x  memory_reduction={memory_reduction:.2%}"
-            )
-            
-            # Store detailed results
-            results_data["results"][str(L)] = {
-                "baseline": {
-                    "latency_seconds": baseline_t,
-                    "memory_gb": baseline_memory,
-                },
-                "sdtp": {
-                    "latency_seconds": sdtp_t,
-                    "memory_gb": sdtp_memory,
-                    "tokens_kept": pruning_stats["final_length"],
-                    "tokens_pruned": pruning_stats["total_tokens_pruned"],
-                    "pruning_ratio": pruning_stats["total_tokens_pruned"] / L if L > 0 else 0.0,
-                    "pruning_steps": pruning_stats["total_pruning_steps"],
-                },
-                "speedup": speedup,
-                "memory_reduction": memory_reduction,
-            }
-            
-            speedups.append(speedup)
-            memory_reductions.append(memory_reduction)
-            results_data["summary"]["tested_lengths"].append(L)
+                # SDTP: manual forward + pruning
+                def sdtp_fn(x, m):
+                    logits, stats = prefill_with_pruning(
+                        model, x, m, pruners, 
+                        config["keep_ratio"],
+                        config["prune_layers"],
+                        config["min_head_tokens"],
+                        config["min_tail_ratio"],
+                    )
+                    return logits, stats
+                
+                sdtp_t = measure_latency(
+                    lambda x, m: sdtp_fn(x, m)[0],  # Only measure latency, not stats
+                    input_ids,
+                    attention_mask,
+                )
+                
+                # Get pruning stats from a separate run
+                _, pruning_stats = sdtp_fn(input_ids, attention_mask)
+                
+                sdtp_memory = 0.0
+                if device.type == "cuda":
+                    sdtp_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
+
+                speedup = baseline_t / sdtp_t if sdtp_t > 0 else float("inf")
+                memory_reduction = (baseline_memory - sdtp_memory) / baseline_memory if baseline_memory > 0 else 0.0
+                
+                print(
+                    f"[Length {L}] baseline={baseline_t:.4f}s ({baseline_memory:.2f}GB)  "
+                    f"sdtp={sdtp_t:.4f}s ({sdtp_memory:.2f}GB)  "
+                    f"speedup={speedup:.2f}x  memory_reduction={memory_reduction:.2%}"
+                )
+                
+                # Store detailed results
+                results_data["results"][str(L)] = {
+                    "baseline": {
+                        "latency_seconds": baseline_t,
+                        "memory_gb": baseline_memory,
+                    },
+                    "sdtp": {
+                        "latency_seconds": sdtp_t,
+                        "memory_gb": sdtp_memory,
+                        "tokens_kept": pruning_stats["final_length"],
+                        "tokens_pruned": pruning_stats["total_tokens_pruned"],
+                        "pruning_ratio": pruning_stats["total_tokens_pruned"] / L if L > 0 else 0.0,
+                        "pruning_steps": pruning_stats["total_pruning_steps"],
+                    },
+                    "speedup": speedup,
+                    "memory_reduction": memory_reduction,
+                }
+                
+                speedups.append(speedup)
+                memory_reductions.append(memory_reduction)
+                results_data["summary"]["tested_lengths"].append(L)
 
         except torch.cuda.OutOfMemoryError:
             print(f"[Length {L}] OOM on GPU, skipping this length.")
@@ -611,6 +724,12 @@ def parse_args():
         default="keep07",
         help="Configuration preset: keep09 (0.9), keep08 (0.8), or keep07 (0.7) keep ratio",
     )
+    parser.add_argument(
+        "--benchmark_mode",
+        choices=["prefill", "end2end"],
+        default="prefill",
+        help="Benchmark mode: 'prefill' for prefill-only, 'end2end' for full end-to-end (prefill + decode)",
+    )
     return parser.parse_args()
 
 
@@ -618,7 +737,11 @@ def main():
     args = parse_args()
 
     if args.mode == "profile":
-        profile_lengths(args.lengths, config_name=args.config)
+        profile_lengths(
+            args.lengths, 
+            config_name=args.config,
+            benchmark_mode=args.benchmark_mode,
+        )
 
     elif args.mode == "generate":
         model, tokenizer, _ = load_model_and_pruners()

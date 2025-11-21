@@ -5,10 +5,12 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 MODE=${1:-profile}
+BENCHMARK_MODE=${2:-prefill}  # prefill or end2end
 
 if [ "$MODE" = "profile" ]; then
   echo "=========================================="
   echo "[Inference] Running all configurations"
+  echo "Benchmark Mode: $BENCHMARK_MODE"
   echo "=========================================="
   echo ""
   
@@ -18,8 +20,9 @@ if [ "$MODE" = "profile" ]; then
   python3 -u src/inference_sdtp.py \
     --mode profile \
     --config keep09 \
+    --benchmark_mode "$BENCHMARK_MODE" \
     --lengths 1024 2048 4096 8192 16384 32768 \
-    "${@:2}"
+    "${@:3}"
   echo ""
   
   # Run keep08 configuration
@@ -28,8 +31,9 @@ if [ "$MODE" = "profile" ]; then
   python3 -u src/inference_sdtp.py \
     --mode profile \
     --config keep08 \
+    --benchmark_mode "$BENCHMARK_MODE" \
     --lengths 1024 2048 4096 8192 16384 32768 \
-    "${@:2}"
+    "${@:3}"
   echo ""
   
   # Run keep07 configuration
@@ -38,8 +42,9 @@ if [ "$MODE" = "profile" ]; then
   python3 -u src/inference_sdtp.py \
     --mode profile \
     --config keep07 \
+    --benchmark_mode "$BENCHMARK_MODE" \
     --lengths 1024 2048 4096 8192 16384 32768 \
-    "${@:2}"
+    "${@:3}"
   echo ""
   
   echo "=========================================="
@@ -58,14 +63,15 @@ elif [ "$MODE" = "generate" ]; then
     --prompt "$PROMPT"
 else
   echo "Unknown mode: $MODE"
-  echo "Usage: $0 [profile|generate] [extra-args...]"
+  echo "Usage: $0 [profile|generate] [benchmark_mode] [extra-args...]"
   echo ""
   echo "  profile (default): Run keep09, keep08, and keep07 configurations"
+  echo "    benchmark_mode: 'prefill' (default) or 'end2end'"
   echo "  generate: Generate text with the model"
   echo ""
   echo "Examples:"
-  echo "  $0                    # Run all configurations"
-  echo "  $0 profile           # Same as above"
+  echo "  $0 profile prefill              # Run prefill-only benchmarks"
+  echo "  $0 profile end2end               # Run end-to-end benchmarks"
   echo "  $0 generate 'Your prompt here'"
   exit 1
 fi

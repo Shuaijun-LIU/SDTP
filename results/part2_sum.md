@@ -343,4 +343,8 @@ Starting from v4.46, the `logits` model output will have the same type as the mo
 论文中生成阶段加速来自KV cache 底层操作减少（因为被剪掉的 token 不再占用）注意力计算序列长度减少
 论文没有做 decode 阶段动态 pruning，这是我们之后的阶段可以提升的
 
+当前进展和分析被总结到了PAPER_IMPLEMENTATION_ANALYSIS.md
+PRUNING_VERIFICATION_ANALYSIS.md
+IMPLEMENTATION_VS_PAPER_COMPARISON.md。我将对缺失的实验做补充。
+
 
