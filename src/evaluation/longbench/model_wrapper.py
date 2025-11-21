@@ -45,7 +45,11 @@ class ModelWrapper:
         self.tokenizer = None
         self.model = None
         self.pruning_modules = None
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Default to cuda:0 for single GPU inference
+        if device:
+            self.device = torch.device(device)
+        else:
+            self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def load_model(self, real_load: bool = False):
         print(f"[Init] Preparing model loading: {self.model_name}")
@@ -66,12 +70,18 @@ class ModelWrapper:
             use_fast=False,
         )
 
+        # Load model on single GPU (cuda:0) - do NOT use device_map="auto"
         self.model = AutoModelForCausalLM.from_pretrained(
             self.model_name,
             trust_remote_code=True,
             torch_dtype=torch.float16,
-            device_map="auto",
+            device_map=None,  # Force single GPU
         )
+        
+        # Move model to single GPU explicitly
+        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.model.to(self.device)
+        print(f"[Init] Model device: {self.device}")
 
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -91,9 +101,8 @@ class ModelWrapper:
             self.pruning_modules.load_state_dict(state_dict)
             
             # Convert to half precision and set to eval mode
-            # Note: We don't move to a specific device here because with device_map="auto",
-            # different layers are on different GPUs. The pruning modules will be moved
-            # to the correct device dynamically in apply_token_pruning().
+            # Pruning modules stay on CPU initially, will be moved to correct device
+            # dynamically in apply_token_pruning() when needed
             self.pruning_modules.half()
             self.pruning_modules.eval()
             for p in self.pruning_modules.parameters():
@@ -123,10 +132,9 @@ class ModelWrapper:
         input_ids = inputs["input_ids"]
         attention_mask = inputs.get("attention_mask", torch.ones_like(input_ids))
 
-        # Move to model device
-        device_obj = next(self.model.parameters()).device
-        input_ids = input_ids.to(device_obj)
-        attention_mask = attention_mask.to(device_obj)
+        # Move to model device (cuda:0)
+        input_ids = input_ids.to(self.device)
+        attention_mask = attention_mask.to(self.device)
 
         with torch.no_grad():
             if self.mode == "sdtp" and self.pruning_modules is not None:
@@ -146,11 +154,18 @@ class ModelWrapper:
                     min_tail_ratio=MIN_TAIL_RATIO,
                 )
                 
+                # Ensure logits are on the correct device
+                logits = logits.to(self.device)
+                
                 # Use the prefill logits to get the first new token
                 # Then continue with standard generation for remaining tokens
                 # This is a simplified approach - full SDTP would also prune during decode
                 next_token_logits = logits[:, -1, :]
                 next_token_id = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+                
+                # Ensure next_token_id is on the correct device before cat
+                next_token_id = next_token_id.to(self.device)
+                input_ids = input_ids.to(self.device)
                 
                 # Continue generation with standard method
                 # Start from the last token of input + first generated token

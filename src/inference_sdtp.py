@@ -158,7 +158,7 @@ def apply_token_pruning(
     dtype = hidden_states.dtype
 
     # Ensure pruning module is on the same device as hidden_states
-    # This is critical when using device_map="auto" where layers are on different GPUs
+    # This ensures device compatibility (pruning modules start on CPU, move to GPU when needed)
     pruning_module = pruning_module.to(device=device, dtype=dtype)
 
     # [seq_len, hidden]
