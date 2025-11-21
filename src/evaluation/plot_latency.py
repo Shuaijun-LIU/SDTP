@@ -228,9 +228,19 @@ def load_combined_json(path):
         length = int(length_str)
         if isinstance(result, dict):
             if "baseline" in result:
-                baseline[length] = result["baseline"]["latency_seconds"]
+                # Support both old format (latency_seconds) and new format (prefill_latency_seconds)
+                baseline_data = result["baseline"]
+                if "prefill_latency_seconds" in baseline_data:
+                    baseline[length] = baseline_data["prefill_latency_seconds"]
+                elif "latency_seconds" in baseline_data:
+                    baseline[length] = baseline_data["latency_seconds"]
             if "sdtp" in result:
-                sdtp[length] = result["sdtp"]["latency_seconds"]
+                # Support both old format (latency_seconds) and new format (prefill_latency_seconds)
+                sdtp_data = result["sdtp"]
+                if "prefill_latency_seconds" in sdtp_data:
+                    sdtp[length] = sdtp_data["prefill_latency_seconds"]
+                elif "latency_seconds" in sdtp_data:
+                    sdtp[length] = sdtp_data["latency_seconds"]
     
     metadata = data.get("metadata", None)
     return baseline, sdtp, metadata
@@ -524,7 +534,7 @@ def plot_comprehensive_singlegpu(out_dir="results/fig"):
     
     # Create comprehensive figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle("Single-GPU SDTP Performance: Comprehensive Comparison", fontsize=16, fontweight='bold', y=0.995)
+    # Removed fig.suptitle() - title will be added in markdown
     
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c']  # Blue, Orange, Green
     markers = ['s', '^', 'D']  # Square, Triangle, Diamond
@@ -625,7 +635,7 @@ def plot_comprehensive_singlegpu(out_dir="results/fig"):
         ax4.text(bar.get_x() + bar.get_width()/2., height,
                 f'{reduction:.1f}%', ha='center', va='bottom', fontsize=10, fontweight='bold')
     
-    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    plt.tight_layout()
     
     out_path = os.path.join(out_dir, "singlegpu_comprehensive.png")
     os.makedirs(out_dir, exist_ok=True)
@@ -660,7 +670,7 @@ def plot_comprehensive_multigpu(out_dir="results/fig"):
     
     # Create comprehensive figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-    fig.suptitle("Multi-GPU SDTP Performance: Comprehensive Analysis", fontsize=16, fontweight='bold', y=0.995)
+    # Removed fig.suptitle() - title will be added in markdown
     
     base_vals = [baseline[L] for L in lengths]
     sdtp_vals = [sdtp[L] for L in lengths]
@@ -732,7 +742,7 @@ def plot_comprehensive_multigpu(out_dir="results/fig"):
         ax4.text(bar.get_x() + bar.get_width()/2., height,
                 f'{reduction:.1f}%', ha='center', va='bottom', fontsize=9, fontweight='bold')
     
-    plt.tight_layout(rect=[0, 0, 1, 0.99])
+    plt.tight_layout()
     
     out_path = os.path.join(out_dir, "multigpu_comprehensive.png")
     os.makedirs(out_dir, exist_ok=True)

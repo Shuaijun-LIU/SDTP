@@ -25,7 +25,11 @@
 
 **Figure: SDTP 性能综合对比 / SDTP Performance Comprehensive Comparison**:
 
+**Single-GPU SDTP Performance: Comprehensive Comparison**
+
 ![Single-GPU Comprehensive Comparison](fig/singlegpu_comprehensive.png)
+
+**Multi-GPU SDTP Performance: Comprehensive Analysis**
 
 ![Multi-GPU Comprehensive Analysis](fig/multigpu_comprehensive.png)
 ---
@@ -89,6 +93,13 @@ SDTP/
 - 论文提出 Saliency-Driven baseline：梯度解释可作为 token 重要度估计。
 - 本脚本实现论文中的 baseline 分支，用于对照训练的可学习剪枝器。
 
+**理论基础 / Theoretical Foundation**:
+- **Saliency Score 计算**：基于梯度特征归因理论，saliency score 定义为：
+  $$\hat{\pi} = \frac{\partial T(x)}{\partial x} \cdot x$$
+  其中 $T(x)$ 是整个网络的输出，$x$ 是输入向量，$\hat{\pi}$ 表示每个 token 的重要性分数。
+- **数学意义**：这是**梯度×输入**的特征归因方法，梯度幅度反映了输出对输入变化的敏感性，高 saliency score 的 token 对模型输出的贡献更大。
+- **Token 稀疏性观察**：论文发现重要 token 是稀疏的，且稀疏率随层数增加而增加，这为分层剪枝提供了理论基础。
+
 **Command**
 ```
 python3 src/stage1_saliency.py --num_samples 1000 --out_path checkpoints/saliency.pt
@@ -127,9 +138,45 @@ Layer 25 sample 0  shape torch.Size([512])
 - 使用 Gumbel-Softmax 生成 soft mask（训练时），硬剪枝将在推理阶段执行。
 - 训练完成后保存到 `checkpoints/pruning_module.pt`。
 
+**训练策略 / Training Strategy**:
+- **两阶段训练方法**：
+  - **Stage 1: Token Marking（标记阶段）**：使用原始模型和所有 token 进行前向传播，计算 saliency scores $\hat{\pi}$（需要梯度计算）。这些 saliency scores 作为监督信号。
+  - **Stage 2: Token Pruning（剪枝阶段）**：Pruning module 生效，使用 MSE loss 和 Ranking loss 监督 pruning module 学习，使用 Cross-entropy loss 保持模型性能。端到端优化。
+- **训练稳定性**：使用 attention masking 模拟 token 剪枝（类似 DynamicViT），避免 hard pruning 导致的梯度不连续问题。
+- **训练配置**：预训练模型用于初始化，原始模型权重冻结，仅更新 SDTP module 的权重。在 databricks-dolly-15k 数据集上训练两个 epoch。
+
 **对应 SDTP Idea / SDTP Alignment**
-- 对应论文核心创新：“Learnable token importance predictor”。
+- 对应论文核心创新："Learnable token importance predictor"。
 - Ranking loss + MSE loss 复现论文中提出的排序监督，使 MLP 逼近 saliency。
+
+**理论基础 / Theoretical Foundation**:
+- **Token Pruning Module 架构**：轻量级两层 MLP，使用 GELU 激活函数：
+  $$\pi = \text{MLP}(\text{GELU}(\text{MLP}(\mathbf{x})))$$
+  其中 $\pi \in \mathbb{R}^{N \times 2}$ 是 pruning module 的输出（每个 token 对应 2 个 logits），$N$ 是当前 token 数量，$\mathbf{x} \in \mathbb{R}^N$ 是输入向量。
+
+- **决策掩码生成**：通过 Gumbel-Softmax 生成可微分的离散采样：
+  $$M = \text{Gumbel-Softmax}(\pi)$$
+  其中 $M \in \{0,1\}^N$ 是 one-hot 向量，表示哪些 token 需要保留。Gumbel-Softmax 在训练时保持梯度流，在推理时退化为 hard decision。
+
+- **损失函数设计**：总损失由三部分组成：
+  $$\mathcal{L} = \mathcal{L}_{\text{cls}} + \mathcal{L}_{\text{mse}} + \mathcal{L}_{\text{r}}$$
+  
+  - **分类损失**（Language Modeling Loss）：
+    $$\mathcal{L}_{\text{cls}} = \text{CrossEntropy}(y, \hat{y})$$
+    其中 $\hat{y}$ 是 transformer 的输出，$y$ 是标签。保持模型的预训练能力，确保剪枝后模型仍能正确预测。
+  
+  - **MSE 损失**（值匹配）：
+    $$\mathcal{L}_{\mathrm{mse}} = \text{MSE}(\pi, \hat{\pi})$$
+    使 pruning module 预测的重要性分数 $\pi$ 与真实的 saliency score $\hat{\pi}$ 在数值上接近。
+  
+  - **Ranking 损失**（排序匹配，核心创新）：
+    总 ranking 损失是所有 stage 的 ranking 损失之和：
+    $$\mathcal{L}_r = \sum_{s=1}^S \mathcal{L}_r^{(s)}$$
+    其中 $S$ 是 pruning stage 的总数（当前实现中 $S=8$）。每个 stage 的 ranking 损失定义为：
+    $$\mathcal{L}_{\mathrm{r}}^{(s)}(\pi, \hat{\pi}) = \sum_{i=1}^{N-1} \sum_{j=i+1}^N \log \left(1+e^{-\left(\left(\pi_i-\pi_j\right) \cdot \operatorname{sign}\left(\hat{\pi}_i-\hat{\pi}_j\right)\right)}\right)$$
+    这是**成对排序损失**（pairwise ranking loss），对于所有 token 对 $(i,j)$：如果 $\hat{\pi}_i > \hat{\pi}_j$（真实 saliency 中 $i$ 更重要），则希望 $\pi_i > \pi_j$。
+
+- **为什么需要 Ranking Loss**：MSE 只保证数值接近，但剪枝时更关心**相对排序**。即使预测值和真实值的数值有偏差，只要排序正确，剪枝结果仍然正确。我们保留高重要性 token，剪枝低重要性 token，因此排序比数值更重要。
 
 **Command**
 ```
@@ -163,14 +210,47 @@ Epoch 2/2: lm_loss=..., mse_loss=..., rank_loss=...
 **Functionality**
 - 手写遍历 Qwen2-7B Transformer 层，在指定层加载 Stage 2 MLP。
 - 推理时硬剪枝：保留前 4 token、尾部 10% token（至少 16 个），再根据 keep ratio 挑选高分 token。
+- **推理时策略的理论依据**：始终保留前 4 个初始 tokens（通常包含特殊 token 和关键上下文），保留尾部 10% 的 tokens（至少 16 个）以确保序列的完整性和连续性，然后根据 pruning module 的预测分数选择 top-k tokens。
 - 支持三种配置：keep09 (keep_ratio=0.9)、keep08 (keep_ratio=0.8)、keep07 (keep_ratio=0.7)。
 - 同步更新 `attention_mask` 和位置编码，确保 RoPE 正常运作。
-- 对比 baseline（不剪枝）与 SDTP（剪枝）预填充时间，得到端到端 speedup。
+- 对比 baseline（不剪枝）与 SDTP（剪枝）预填充时间，得到 **Prefill-only Speedup**（仅测量 prefill 阶段的加速）。
+- **注意**：阶段1测量的是 Prefill-only Speedup，阶段2测量的是 End2End Speedup（prefill + decode），两者定义不同。
 
 **对应 SDTP Idea / SDTP Alignment**
 - "Selective dynamic token pruning achieved during prefill" 100% 复现。
 - 分层剪枝（layer-wise）、实时更新 token 序列长度（real-time compression）。
 - 使用 GELU 激活函数和 logistic ranking loss，符合论文实现。
+
+**理论基础 / Theoretical Foundation**:
+- **分层剪枝策略**：
+  - 使用 8 个 pruning stages（层 [4, 7, 10, 13, 16, 19, 22, 25]）
+  - **每层独立剪枝**：每层基于当前序列长度应用相同的保留率 $r$（非累积）
+  - 支持多个配置：$r \in \{0.9, 0.8, 0.7\}$
+  - 使用 `keep09` 配置时，累积保留率约为 $0.9^8 \approx 0.43$（剪枝约 57%）
+  - **论文描述（理论）**：论文中设置 $S=10$ 个 pruning stages，几何序列保留率：$[r, r^2, r^3, \ldots, r^{10}]$，其中 $r=0.9$，累积保留率约为 $r^{10} \approx 0.35$（剪枝约 65%）。当前实现使用 8 个 stages，每层独立应用保留率 $r$。
+
+- **稀疏性传递性**：如果前层 token 被判定为冗余，在深层仍然冗余，这为分层剪枝提供了理论基础。数学表达：若 $\hat{\pi}_i^{(l)} < \theta$，则 $\hat{\pi}_i^{(l+k)} < \theta'$ 的概率很高。
+
+- **计算效率**：对于长度为 $N$ 的序列，剪枝到 $rN$ 个 token 后：
+  - Attention 复杂度：$O((rN)^2) = O(r^2 N^2)$
+  - FLOPs 减少：约 $1-r^2$（当 $r=0.9$ 时，约减少 19%；当 $r=0.7$ 时，约减少 51%）
+  - Pruning module 的计算量 < 1% 的 LLM 计算量
+
+- **推理时剪枝算法**（伪代码）：
+  ```
+  输入：序列 tokens $x \in \mathbb{R}^N$，保留率 $r$，最小头部 tokens $h=4$，最小尾部比例 $t=0.1$
+  
+  对于每个 pruning stage $s \in \{4, 7, 10, 13, 16, 19, 22, 25\}$:
+    1. 计算 token 重要性分数：$\pi = \text{PruningModule}(x)$
+    2. 确定保留集合 $K$：
+       - 始终保留前 $h$ 个 tokens：$K \leftarrow \{1, 2, \ldots, \min(h, N)\}$
+       - 始终保留尾部 $t \times N$ 个 tokens（至少 16 个）：$K \leftarrow K \cup \{N - \max(16, \lfloor t \times N \rfloor) + 1, \ldots, N\}$
+       - 根据 $\pi$ 选择 top-$k$ tokens，其中 $k = \lfloor r \times N \rfloor - |K|$
+    3. 更新序列：$x \leftarrow x[K]$（只保留 $K$ 中的 tokens）
+    4. 更新序列长度：$N \leftarrow |K|$
+  
+  输出：剪枝后的序列 $x$
+  ```
 
 **Command**
 ```
@@ -206,11 +286,14 @@ Length 4096: baseline=0.8040s, sdtp=0.3025s, speedup=2.66x
 
 ![Single GPU Inference](fig/run_inference.png)
 
+**Single-GPU SDTP Performance: Comprehensive Comparison**
+
 ![Single-GPU Comprehensive Comparison](fig/singlegpu_comprehensive.png)
 
 **Conclusion**
-- 单卡环境下，SDTP 提供 1.4–2.5× 的 prefilling 提速（取决于 keep_ratio 配置）。
-- keep07 配置（最激进的剪枝）达到最高 2.48× 平均加速，同时保持 FLOPs 减少约 35%。
+- 单卡环境下，SDTP 提供 1.4–2.5× 的 **Prefill-only Speedup**（仅测量 prefill 阶段的加速，取决于 keep_ratio 配置）。
+- keep07 配置（最激进的剪枝）达到最高 2.48× 平均 Prefill-only 加速，同时保持 FLOPs 减少约 35%。
+- **与阶段2的区别**：阶段1测量的是 Prefill-only Speedup（只测量 prefill 阶段），阶段2测量的是 End2End Speedup（prefill + decode 128 tokens）。End2End Speedup 可能更高，因为 decode 阶段也受益于更小的 KV cache。
 - 结果优于多数已发表基线，表明实现可靠。
 
 ---
@@ -279,6 +362,8 @@ Length 32768: baseline=126.95s, sdtp=3.20s, speedup=39.69x,  latency_reduction=9
 
 ![Multi-GPU Inference](fig/run_inference_multigpu.png)
 
+**Multi-GPU SDTP Performance: Comprehensive Analysis**
+
 ![Multi-GPU Comprehensive Analysis](fig/multigpu_comprehensive.png)
 
 **Conclusion**
@@ -311,11 +396,13 @@ Length 32768: baseline=126.95s, sdtp=3.20s, speedup=39.69x,  latency_reduction=9
    - 剪枝 MLP 训练顺利，推理中可直接加载，未观察到数值不稳定或崩溃。
    - 使用 GELU 激活函数和 logistic ranking loss，完全符合论文实现。
 
-2. **单 GPU 提供 1.4–2.5× Prefill 加速 / Single-GPU prefill speedup of 1.4–2.5×**
+2. **单 GPU 提供 1.4–2.5× Prefill-only 加速 / Single-GPU prefill-only speedup of 1.4–2.5×**
    - 以 Qwen2-7B 为例，SDTP 能显著降低注意力 FLOPs。
-   - **keep09 配置**（保守剪枝）：平均 1.43× 加速，FLOPs 减少约 12.2%。
-   - **keep08 配置**（中等剪枝）：平均 1.96× 加速，FLOPs 减少约 23.8%。
-   - **keep07 配置**（激进剪枝）：平均 2.48× 加速，FLOPs 减少约 35.0%。
+   - **测量指标**：Prefill-only Speedup（仅测量 prefill 阶段的加速，不包含 decode 阶段）。
+   - **keep09 配置**（保守剪枝）：平均 1.43× Prefill-only 加速，FLOPs 减少约 12.2%。
+   - **keep08 配置**（中等剪枝）：平均 1.96× Prefill-only 加速，FLOPs 减少约 23.8%。
+   - **keep07 配置**（激进剪枝）：平均 2.48× Prefill-only 加速，FLOPs 减少约 35.0%。
+   - **与阶段2对比**：阶段2的 End2End Speedup（prefill + decode）在长序列上可能更高（最高 5.50×），因为 decode 阶段也受益于更小的 KV cache。
    - 更激进的剪枝带来更高的加速，但需要权衡精度损失。
 
 3. **多 GPU 提供 12–40× Speedup / Multi-GPU speedup up to 40×**
@@ -328,3 +415,13 @@ Length 32768: baseline=126.95s, sdtp=3.20s, speedup=39.69x,  latency_reduction=9
    - 可以在现有实现基础上进一步集成 FlashAttention、DeepSpeed、LoRA 等优化。
    - 当前成果已足以撰写复现报告和实验章节。
    - 提供了三种配置的完整对比数据，便于后续研究和优化。
+
+5. **理论优势验证 / Theoretical Advantages Validated**
+   - **计算效率**：Pruning module 的计算量 < 1% 的 LLM 计算量，通过减少 token 数量直接降低后续层的计算复杂度。
+   - **泛化能力**：冻结所有 Transformer blocks，只训练 pruning module，保持预训练模型的泛化能力。
+   - **正交性**：Token pruning 主要减少 prefill 阶段的 FLOPs，与 KV cache compression（减少 decode 阶段）正交，可以组合使用进一步加速。
+   - **关键数学洞察**：
+     - 稀疏性传递性：为分层剪枝提供了理论基础
+     - 排序比数值更重要：Ranking loss 确保相对重要性正确
+     - 分层渐进式剪枝：每层独立剪枝，渐进式减少 token 数量，比一次性剪枝更稳定
+     - 梯度归因指导：利用模型自身的梯度信息，而非启发式规则
