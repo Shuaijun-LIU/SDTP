@@ -1,7 +1,7 @@
 # 阶段 2 总结
 
 - 该文档用于记录复现SDTP的评测与实验过程中的：文件 → 功能 → Idea → 指令 → 结果 → 结论 （Overview of files, functionality, SDTP ideas, commands, outcomes, conclusions）
-- 阶段2完成了评测工具搭建、LongBench数据集准备、End2End基准测试实现。记录了实验数据
+- 阶段2完成了评测工具搭建、LongBench数据集准备、End2End基准测试实现。记录了实验数据，做了一些可视化。
   - 目前只有单卡模式 进行了LongBench测试和End2End测试
   - 多卡模式用于大规模延迟测试
 
@@ -62,20 +62,10 @@ SDTP/
 ### 1. LongBench v1 数据集准备
 
 **Files**
-- `scripts/download_longbench_v1.py`
-- `scripts/validate_longbench_data.py`
-- `data/LongBench_data/*.json`
-
-**Functionality**
-- 从 HuggingFace (`THUDM/LongBench`) 下载 LongBench v1 数据集
-- 转换为 SDTP 统一格式：`List[Dict]`，每个字典包含 `input` (string) 和 `answers` (list of strings)
-- 验证格式正确性，确保与 `src/evaluation/longbench/dataset.py` 兼容
-- 支持 8 个数据集：narrativeqa, qasper, gov_report, multi_news, multifieldqa_en, hotpotqa, musique, triviaqa
-
-**对应 SDTP Idea / SDTP Alignment**
-- 论文使用 LongBench 评估长上下文理解能力
-- 当前实现只使用 **LongBench v1** 版本（更简单的第一个版本），包含多个任务类型（单文档QA、多文档QA、摘要、少样本学习、代码生成等）
-- 数据集格式统一，便于评测框架使用
+- `scripts/download_longbench_v1.py` 从 HuggingFace (`THUDM/LongBench`) 下载 LongBench v1 数据集
+- `scripts/validate_longbench_data.py` 转换为 SDTP 统一格式：`List[Dict]`，每个字典包含 `input` (string) 和 `answers` (list of strings) 
+- `data/LongBench_data/*.json` 
+- 当前实现只使用 **LongBench v1** 版本（v2是最新的 v1是更老更简单的），支持 8 个数据集：narrativeqa, qasper, gov_report, multi_news, multifieldqa_en, hotpotqa, musique, triviaqa，多个任务类型（单文档QA、多文档QA、摘要、少样本学习、代码生成等）
 
 **Command**
 ```bash
@@ -86,25 +76,10 @@ python3 scripts/download_longbench_v1.py
 python3 scripts/validate_longbench_data.py
 ```
 
-**Results**
-```
-已成功下载并转换 8 个数据集：
-- narrativeqa.json      (200 items)
-- qasper.json           (200 items)
-- gov_report.json       (200 items)
-- multi_news.json       (200 items)
-- multifieldqa_en.json  (150 items)
-- hotpotqa.json         (200 items)
-- musique.json          (200 items)
-- triviaqa.json         (200 items)
-
-所有文件格式正确，符合 SDTP 格式要求，SDTP 加载器已经改为和他们的测试格式兼容
-```
-
 **Conclusion**
 - ✅ 数据集已准备就绪，可用于评估
 - ✅ 格式验证通过
-- ⚠️ 注意：`legal_contract_qa` 不在 LongBench v1 中
+- 注意：`legal_contract_qa` 不在 LongBench v1 中 （不用管）
 
 ---
 
@@ -149,12 +124,16 @@ python3 -m src.evaluation.longbench.run_longbench \
 [Eval] Hit Rate: 0.3450
 ```
 
+![LongBench Baseline 评测运行截图](fig/run_longbench_baseline.png)
+
 **SDTP 测试（HotpotQA，200 samples）**:
 ```
 keep_ratio=0.9 → Hit Rate: 0.320 (相对 baseline 下降 2.5 个百分点)
 keep_ratio=0.8 → Hit Rate: 0.328 (相对 baseline 下降 1.7 个百分点)
 keep_ratio=0.7 → Hit Rate: 0.332 (相对 baseline 下降 1.3 个百分点)
 ```
+
+![LongBench SDTP keep_ratio=0.7 评测运行截图](fig/run_longbench_keep0.7.png)
 
 **关键发现**:
 - ✅ SDTP prefill 剪枝完全有效（KV cache 显著减少）
@@ -203,6 +182,8 @@ python3 src/inference_sdtp.py \
   --config keep09 \
   --lengths 1024 2048 4096 8192 16384 32768
 ```
+
+![End2End 基准测试运行截图](fig/scripts:run_inference.sh_profile_end2end.png)
 
 **Results**
 
@@ -386,27 +367,15 @@ python3 src/evaluation/plot_latency.py \
 ---
 
 ## V. 当前的运行结论
-
-1. **LongBench 评测框架完整可用 / LongBench evaluation framework is complete and functional**
-   - 数据集已准备就绪，格式验证通过
-   - 评测框架已实现真实推理功能
-   - Baseline 和 SDTP 两种模式均可正常运行
-
-2. **End2End 测试结果符合预期 / End2End test results meet expectations**
-   - 在长序列场景下，SDTP 实现了显著的加速（最高 5.50×）
+ 1.**End2End 测试结果符合预期 / End2End test results meet expectations**
+   - 在长序列场景下，SDTP 实现了显著的加速（整个推理过程，当前表现最高为 5.50×）
    - KV Cache 减少效果明显（keep07 配置减少约 94%）
-   - 结果与论文报告的趋势一致
-
-3. **评测结果验证了 SDTP 的有效性 / Evaluation results validate SDTP effectiveness**
+  
+2. **评测结果验证了 SDTP 的有效性 / Evaluation results validate SDTP effectiveness**
    - LongBench 评测显示 SDTP 在保持性能的同时实现了加速（性能下降仅 1.3-2.5 个百分点）
    - 有趣的是，keep_ratio=0.7 的性能（Hit Rate: 0.332）反而略好于 keep_ratio=0.9（Hit Rate: 0.320）
    - End2End 测试证明了 SDTP 在长序列场景下的优势（最高 5.50× 加速）
    - 提供了三种配置的完整对比数据，展示了不同剪枝率下的性能-速度权衡
-
-4. **代码结构清晰，便于扩展 / Clean structure ready for future work**
-   - 评测工具模块化设计，易于添加新任务
-   - 可视化工具支持多种数据格式
-   - 所有实验数据已收集完成，可以开始结果整合阶段
 
 ---
 
