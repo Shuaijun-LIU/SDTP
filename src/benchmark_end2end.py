@@ -191,7 +191,8 @@ def run_end2end_sdtp(
         # Use the simpler prefill_with_pruning from inference_sdtp (not prefill_with_pruning_infer)
         # This avoids KV cache manipulation issues
         # MIN_HEAD_TOKENS and MIN_TAIL_RATIO are already imported at module level
-        logits, pruning_stats = prefill_with_pruning(
+        # Request pruned input_ids for decode phase
+        result = prefill_with_pruning(
             model=model,
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -200,7 +201,14 @@ def run_end2end_sdtp(
             prune_layers=prune_layers,
             min_head_tokens=MIN_HEAD_TOKENS,
             min_tail_ratio=MIN_TAIL_RATIO,
+            return_pruned_input_ids=True,
         )
+        # Handle both old (2-tuple) and new (3-tuple) return formats for backward compatibility
+        if len(result) == 3:
+            logits, pruning_stats, pruned_input_ids = result
+        else:
+            logits, pruning_stats = result
+            pruned_input_ids = None
 
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -215,20 +223,22 @@ def run_end2end_sdtp(
         kv_lens_after_prefill = [final_seq_len] * len(model.model.layers)
 
         # ============================================
-        # STEP 2: Decode with FALLBACK mode
-        # Use standard model.generate() WITHOUT pruned KV cache
-        # This ensures GQA compatibility
+        # STEP 2: Decode with pruned sequence
+        # Use pruned input_ids from prefill phase to continue generation
+        # This ensures decode benefits from reduced KV cache size
         # ============================================
         if device.type == "cuda":
             torch.cuda.synchronize()
         decode_start = time.perf_counter()
 
-        # FALLBACK: Use standard generate() with original input_ids
-        # The prefill pruning benefit comes from reduced computation during prefill,
-        # but decode uses standard generate() for compatibility
+        # Use pruned input_ids for decode phase to benefit from reduced KV cache
+        # If pruned_input_ids is None (backward compatibility), fall back to original input_ids
+        decode_input_ids = pruned_input_ids if pruned_input_ids is not None else input_ids
+        decode_attention_mask = torch.ones_like(decode_input_ids, dtype=torch.long, device=device)
+        
         generated = model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
+            input_ids=decode_input_ids,
+            attention_mask=decode_attention_mask,
             max_new_tokens=max_new_tokens,
             do_sample=False,
             use_cache=True,
@@ -241,8 +251,10 @@ def run_end2end_sdtp(
 
     total_time = prefill_time + decode_time
 
-    # Calculate final KV lengths (approximate)
-    generated_length = generated.shape[1] - input_ids.shape[1]
+    # Calculate final KV lengths
+    # Use pruned input_ids length if available, otherwise use original
+    decode_start_length = pruned_input_ids.shape[1] if pruned_input_ids is not None else input_ids.shape[1]
+    generated_length = generated.shape[1] - decode_start_length
     kv_lens_final = [kv_lens_after_prefill[0] + generated_length] * len(model.model.layers)
 
     return {

@@ -4,7 +4,7 @@ import argparse
 import time
 import json
 import os
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -306,7 +306,8 @@ def prefill_with_pruning(
     prune_layers: list = None,
     min_head_tokens: int = None,
     min_tail_ratio: float = None,
-) -> Tuple[torch.Tensor, Dict]:
+    return_pruned_input_ids: bool = False,
+) -> Union[Tuple[torch.Tensor, Dict], Tuple[torch.Tensor, Dict, torch.Tensor]]:
     """
     Manual forward over Transformer layers with token pruning applied
     at selected layers. Mirrors Stage2 training:
@@ -318,9 +319,13 @@ def prefill_with_pruning(
         * Optionally prune tokens at this layer.
     - Apply final norm + lm_head to get logits.
     
+    Args:
+        return_pruned_input_ids: If True, also return pruned input_ids for decode phase
+    
     Returns:
         logits: Model output logits
         pruning_stats: Dict with aggregated pruning statistics
+        pruned_input_ids: (Optional) Pruned input_ids [batch, pruned_seq_len] if return_pruned_input_ids=True
     """
     if prune_layers is None:
         prune_layers = PRUNE_LAYERS
@@ -333,13 +338,17 @@ def prefill_with_pruning(
     hidden_states = model.model.embed_tokens(input_ids)
     original_length = hidden_states.size(1)
     
-    # Track pruning statistics
+    # Track pruning statistics and indices for reconstructing pruned input_ids
     pruning_stats = {
         "total_pruning_steps": 0,
         "total_tokens_pruned": 0,
         "final_length": original_length,
         "layer_stats": []
     }
+    
+    # Track cumulative indices to reconstruct pruned input_ids
+    # Start with all indices: [0, 1, 2, ..., seq_len-1]
+    current_indices = torch.arange(original_length, device=input_ids.device, dtype=torch.long)
 
     for layer_idx, layer in enumerate(model.model.layers):
         # CRITICAL: Check sequence length before layer forward
@@ -385,7 +394,7 @@ def prefill_with_pruning(
             pruner = pruning_modules[str(layer_idx)]
             # CRITICAL FIX B: Each layer prunes based on CURRENT sequence length
             # keep_ratio is applied per layer, NOT cumulatively
-            hidden_states, _, stats = apply_token_pruning(
+            hidden_states, kept_indices, stats = apply_token_pruning(
                 hidden_states,
                 pruner,
                 keep_ratio,  # Applied to current seq_len, not cumulative
@@ -402,6 +411,13 @@ def prefill_with_pruning(
                     f"hidden_states sequence length is 0! "
                     f"Input was {current_seq_len}, stats={stats}"
                 )
+            
+            # Update cumulative indices: map current layer's kept indices to original input_ids indices
+            if return_pruned_input_ids:
+                # kept_indices: [kept_len] indices relative to current sequence
+                # current_indices: [current_seq_len] indices relative to original input_ids
+                # Map kept_indices to original indices
+                current_indices = current_indices[kept_indices]
             
             pruning_stats["total_pruning_steps"] += 1
             pruning_stats["total_tokens_pruned"] += stats["tokens_pruned"]
@@ -429,7 +445,17 @@ def prefill_with_pruning(
             f"hidden_states shape was {hidden_states.shape}"
         )
     
-    return logits, pruning_stats
+    # Reconstruct pruned input_ids if requested
+    pruned_input_ids = None
+    if return_pruned_input_ids:
+        # current_indices now contains the indices of original input_ids that were kept
+        # Extract the pruned input_ids
+        pruned_input_ids = input_ids[:, current_indices]
+    
+    if return_pruned_input_ids:
+        return logits, pruning_stats, pruned_input_ids
+    else:
+        return logits, pruning_stats
 
 
 # ============================

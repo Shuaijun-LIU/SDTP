@@ -348,3 +348,285 @@ PRUNING_VERIFICATION_ANALYSIS.md
 IMPLEMENTATION_VS_PAPER_COMPARISON.md。我将对缺失的实验做补充。
 
 
+
+
+最新结果
+user2@bld-Rack-Server:/data/private/user2/workspace/SDTP$ bash scripts/run_inference.sh profile end2end
+==========================================
+[Inference] Running all configurations
+Benchmark Mode: end2end
+==========================================
+
+[Config: keep09] Profiling baseline vs SDTP (keep_ratio=0.9)
+----------------------------------------
+/home/user2/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[Config] Using keep09 configuration:
+  Prune layers: [4, 7, 10, 13, 16, 19, 22, 25]
+  Keep ratio: 0.9
+  Cumulative keep ratio: 0.4305
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:02<00:00,  1.96it/s]
+Profiling lengths: [1024, 2048, 4096, 8192, 16384, 32768]
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:601: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.7` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:606: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.8` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:623: UserWarning: `do_sample` is set to `False`. However, `top_k` is set to `20` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_k`.
+  warnings.warn(
+Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)
+The attention layers in this model are transitioning from computing the RoPE embeddings internally through `position_ids` (2D tensor with the indexes of the tokens), to using externally computed `position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be removed and `position_embeddings` will be mandatory.
+[PRUNE] Layer 4: seq_len=1024, keep_k=921, kept=921, pruned=103, ratio=10.06%
+[PRUNE] Layer 7: seq_len=921, keep_k=828, kept=828, pruned=93, ratio=10.10%
+[PRUNE] Layer 10: seq_len=828, keep_k=745, kept=745, pruned=83, ratio=10.02%
+[PRUNE] Layer 13: seq_len=745, keep_k=670, kept=670, pruned=75, ratio=10.07%
+[PRUNE] Layer 16: seq_len=670, keep_k=603, kept=603, pruned=67, ratio=10.00%
+[PRUNE] Layer 19: seq_len=603, keep_k=542, kept=542, pruned=61, ratio=10.12%
+[PRUNE] Layer 22: seq_len=542, keep_k=487, kept=487, pruned=55, ratio=10.15%
+[PRUNE] Layer 25: seq_len=487, keep_k=438, kept=438, pruned=49, ratio=10.06%
+[Length 1024] End2End Results:
+  Baseline: prefill=0.1214s, decode=2.1409s, total=2.2622s
+  SDTP:     prefill=0.1359s, decode=2.2972s, total=2.4331s
+  Speedup:  prefill=0.89x, decode=0.93x, total=0.93x
+  KV Cache: baseline=1024, sdtp=438, reduction=57.23%
+[PRUNE] Layer 4: seq_len=2048, keep_k=1843, kept=1843, pruned=205, ratio=10.01%
+[PRUNE] Layer 7: seq_len=1843, keep_k=1658, kept=1658, pruned=185, ratio=10.04%
+[PRUNE] Layer 10: seq_len=1658, keep_k=1492, kept=1492, pruned=166, ratio=10.01%
+[PRUNE] Layer 13: seq_len=1492, keep_k=1342, kept=1342, pruned=150, ratio=10.05%
+[PRUNE] Layer 16: seq_len=1342, keep_k=1207, kept=1207, pruned=135, ratio=10.06%
+[PRUNE] Layer 19: seq_len=1207, keep_k=1086, kept=1086, pruned=121, ratio=10.02%
+[PRUNE] Layer 22: seq_len=1086, keep_k=977, kept=977, pruned=109, ratio=10.04%
+[PRUNE] Layer 25: seq_len=977, keep_k=879, kept=879, pruned=98, ratio=10.03%
+[Length 2048] End2End Results:
+  Baseline: prefill=0.2752s, decode=2.6058s, total=2.8810s
+  SDTP:     prefill=0.2148s, decode=2.9079s, total=3.1226s
+  Speedup:  prefill=1.28x, decode=0.90x, total=0.92x
+  KV Cache: baseline=2048, sdtp=879, reduction=57.08%
+[PRUNE] Layer 4: seq_len=4096, keep_k=3686, kept=3686, pruned=410, ratio=10.01%
+[PRUNE] Layer 7: seq_len=3686, keep_k=3317, kept=3317, pruned=369, ratio=10.01%
+[PRUNE] Layer 10: seq_len=3317, keep_k=2985, kept=2985, pruned=332, ratio=10.01%
+[PRUNE] Layer 13: seq_len=2985, keep_k=2686, kept=2686, pruned=299, ratio=10.02%
+[PRUNE] Layer 16: seq_len=2686, keep_k=2417, kept=2417, pruned=269, ratio=10.01%
+[PRUNE] Layer 19: seq_len=2417, keep_k=2175, kept=2175, pruned=242, ratio=10.01%
+[PRUNE] Layer 22: seq_len=2175, keep_k=1957, kept=1957, pruned=218, ratio=10.02%
+[PRUNE] Layer 25: seq_len=1957, keep_k=1761, kept=1761, pruned=196, ratio=10.02%
+[Length 4096] End2End Results:
+  Baseline: prefill=0.6677s, decode=0.2468s, total=0.9145s
+  SDTP:     prefill=0.4722s, decode=0.9662s, total=1.4384s
+  Speedup:  prefill=1.41x, decode=0.26x, total=0.64x
+  KV Cache: baseline=4096, sdtp=1761, reduction=57.01%
+[PRUNE] Layer 4: seq_len=8192, keep_k=7372, kept=7372, pruned=820, ratio=10.01%
+[PRUNE] Layer 7: seq_len=7372, keep_k=6634, kept=6634, pruned=738, ratio=10.01%
+[PRUNE] Layer 10: seq_len=6634, keep_k=5970, kept=5970, pruned=664, ratio=10.01%
+[PRUNE] Layer 13: seq_len=5970, keep_k=5373, kept=5373, pruned=597, ratio=10.00%
+[PRUNE] Layer 16: seq_len=5373, keep_k=4835, kept=4835, pruned=538, ratio=10.01%
+[PRUNE] Layer 19: seq_len=4835, keep_k=4351, kept=4351, pruned=484, ratio=10.01%
+[PRUNE] Layer 22: seq_len=4351, keep_k=3915, kept=3915, pruned=436, ratio=10.02%
+[PRUNE] Layer 25: seq_len=3915, keep_k=3523, kept=3523, pruned=392, ratio=10.01%
+[Length 8192] End2End Results:
+  Baseline: prefill=1.2822s, decode=3.2726s, total=4.5548s
+  SDTP:     prefill=0.9506s, decode=4.6000s, total=5.5506s
+  Speedup:  prefill=1.35x, decode=0.71x, total=0.82x
+  KV Cache: baseline=8192, sdtp=3523, reduction=56.99%
+[PRUNE] Layer 4: seq_len=16384, keep_k=14745, kept=14745, pruned=1639, ratio=10.00%
+[PRUNE] Layer 7: seq_len=14745, keep_k=13270, kept=13270, pruned=1475, ratio=10.00%
+[PRUNE] Layer 10: seq_len=13270, keep_k=11943, kept=11943, pruned=1327, ratio=10.00%
+[PRUNE] Layer 13: seq_len=11943, keep_k=10748, kept=10748, pruned=1195, ratio=10.01%
+[PRUNE] Layer 16: seq_len=10748, keep_k=9673, kept=9673, pruned=1075, ratio=10.00%
+[PRUNE] Layer 19: seq_len=9673, keep_k=8705, kept=8705, pruned=968, ratio=10.01%
+[PRUNE] Layer 22: seq_len=8705, keep_k=7834, kept=7834, pruned=871, ratio=10.01%
+[PRUNE] Layer 25: seq_len=7834, keep_k=7050, kept=7050, pruned=784, ratio=10.01%
+[Length 16384] End2End Results:
+  Baseline: prefill=3.2921s, decode=4.5302s, total=7.8223s
+  SDTP:     prefill=2.1967s, decode=7.9088s, total=10.1055s
+  Speedup:  prefill=1.50x, decode=0.57x, total=0.77x
+  KV Cache: baseline=16384, sdtp=7050, reduction=56.97%
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (32768). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+[Length 32768] Baseline End2End failed: CUDA out of memory. Tried to allocate 18.56 GiB. GPU 0 has a total capacity of 47.37 GiB of which 17.60 GiB is free. Process 3606394 has 2.27 GiB memory in use. Including non-PyTorch memory, this process has 27.45 GiB memory in use. Of the allocated memory 25.54 GiB is allocated by PyTorch, and 1.52 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[Length 32768] OOM on GPU, skipping this length.
+[OK] Results saved to results/latency_results_keep09.json
+[OK] Baseline results saved to results/latency_baseline_keep09.json
+[OK] SDTP results saved to results/latency_sdtp_keep09.json
+
+[Config: keep08] Profiling baseline vs SDTP (keep_ratio=0.8)
+----------------------------------------
+/home/user2/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[Config] Using keep08 configuration:
+  Prune layers: [4, 7, 10, 13, 16, 19, 22, 25]
+  Keep ratio: 0.8
+  Cumulative keep ratio: 0.1678
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  3.46it/s]
+Profiling lengths: [1024, 2048, 4096, 8192, 16384, 32768]
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:601: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.7` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:606: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.8` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:623: UserWarning: `do_sample` is set to `False`. However, `top_k` is set to `20` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_k`.
+  warnings.warn(
+Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)
+The attention layers in this model are transitioning from computing the RoPE embeddings internally through `position_ids` (2D tensor with the indexes of the tokens), to using externally computed `position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be removed and `position_embeddings` will be mandatory.
+[PRUNE] Layer 4: seq_len=1024, keep_k=819, kept=819, pruned=205, ratio=20.02%
+[PRUNE] Layer 7: seq_len=819, keep_k=655, kept=655, pruned=164, ratio=20.02%
+[PRUNE] Layer 10: seq_len=655, keep_k=524, kept=524, pruned=131, ratio=20.00%
+[PRUNE] Layer 13: seq_len=524, keep_k=419, kept=419, pruned=105, ratio=20.04%
+[PRUNE] Layer 16: seq_len=419, keep_k=335, kept=335, pruned=84, ratio=20.05%
+[PRUNE] Layer 19: seq_len=335, keep_k=268, kept=268, pruned=67, ratio=20.00%
+[PRUNE] Layer 22: seq_len=268, keep_k=214, kept=214, pruned=54, ratio=20.15%
+[PRUNE] Layer 25: seq_len=214, keep_k=171, kept=171, pruned=43, ratio=20.09%
+[Length 1024] End2End Results:
+  Baseline: prefill=0.1279s, decode=2.1617s, total=2.2896s
+  SDTP:     prefill=0.1270s, decode=2.2847s, total=2.4117s
+  Speedup:  prefill=1.01x, decode=0.95x, total=0.95x
+  KV Cache: baseline=1024, sdtp=171, reduction=83.30%
+[PRUNE] Layer 4: seq_len=2048, keep_k=1638, kept=1638, pruned=410, ratio=20.02%
+[PRUNE] Layer 7: seq_len=1638, keep_k=1310, kept=1310, pruned=328, ratio=20.02%
+[PRUNE] Layer 10: seq_len=1310, keep_k=1048, kept=1048, pruned=262, ratio=20.00%
+[PRUNE] Layer 13: seq_len=1048, keep_k=838, kept=838, pruned=210, ratio=20.04%
+[PRUNE] Layer 16: seq_len=838, keep_k=670, kept=670, pruned=168, ratio=20.05%
+[PRUNE] Layer 19: seq_len=670, keep_k=536, kept=536, pruned=134, ratio=20.00%
+[PRUNE] Layer 22: seq_len=536, keep_k=428, kept=428, pruned=108, ratio=20.15%
+[PRUNE] Layer 25: seq_len=428, keep_k=342, kept=342, pruned=86, ratio=20.09%
+[Length 2048] End2End Results:
+  Baseline: prefill=0.3123s, decode=2.5707s, total=2.8830s
+  SDTP:     prefill=0.1785s, decode=2.9279s, total=3.1064s
+  Speedup:  prefill=1.75x, decode=0.88x, total=0.93x
+  KV Cache: baseline=2048, sdtp=342, reduction=83.30%
+[PRUNE] Layer 4: seq_len=4096, keep_k=3276, kept=3276, pruned=820, ratio=20.02%
+[PRUNE] Layer 7: seq_len=3276, keep_k=2620, kept=2620, pruned=656, ratio=20.02%
+[PRUNE] Layer 10: seq_len=2620, keep_k=2096, kept=2096, pruned=524, ratio=20.00%
+[PRUNE] Layer 13: seq_len=2096, keep_k=1676, kept=1676, pruned=420, ratio=20.04%
+[PRUNE] Layer 16: seq_len=1676, keep_k=1340, kept=1340, pruned=336, ratio=20.05%
+[PRUNE] Layer 19: seq_len=1340, keep_k=1072, kept=1072, pruned=268, ratio=20.00%
+[PRUNE] Layer 22: seq_len=1072, keep_k=857, kept=857, pruned=215, ratio=20.06%
+[PRUNE] Layer 25: seq_len=857, keep_k=685, kept=685, pruned=172, ratio=20.07%
+[Length 4096] End2End Results:
+  Baseline: prefill=0.7293s, decode=0.2709s, total=1.0002s
+  SDTP:     prefill=0.3751s, decode=1.0163s, total=1.3913s
+  Speedup:  prefill=1.94x, decode=0.27x, total=0.72x
+  KV Cache: baseline=4096, sdtp=685, reduction=83.28%
+[PRUNE] Layer 4: seq_len=8192, keep_k=6553, kept=6553, pruned=1639, ratio=20.01%
+[PRUNE] Layer 7: seq_len=6553, keep_k=5242, kept=5242, pruned=1311, ratio=20.01%
+[PRUNE] Layer 10: seq_len=5242, keep_k=4193, kept=4193, pruned=1049, ratio=20.01%
+[PRUNE] Layer 13: seq_len=4193, keep_k=3354, kept=3354, pruned=839, ratio=20.01%
+[PRUNE] Layer 16: seq_len=3354, keep_k=2683, kept=2683, pruned=671, ratio=20.01%
+[PRUNE] Layer 19: seq_len=2683, keep_k=2146, kept=2146, pruned=537, ratio=20.01%
+[PRUNE] Layer 22: seq_len=2146, keep_k=1716, kept=1716, pruned=430, ratio=20.04%
+[PRUNE] Layer 25: seq_len=1716, keep_k=1372, kept=1372, pruned=344, ratio=20.05%
+[Length 8192] End2End Results:
+  Baseline: prefill=1.3554s, decode=3.2874s, total=4.6429s
+  SDTP:     prefill=0.7128s, decode=4.6745s, total=5.3874s
+  Speedup:  prefill=1.90x, decode=0.70x, total=0.86x
+  KV Cache: baseline=8192, sdtp=1372, reduction=83.25%
+[PRUNE] Layer 4: seq_len=16384, keep_k=13107, kept=13107, pruned=3277, ratio=20.00%
+[PRUNE] Layer 7: seq_len=13107, keep_k=10485, kept=10485, pruned=2622, ratio=20.00%
+[PRUNE] Layer 10: seq_len=10485, keep_k=8388, kept=8388, pruned=2097, ratio=20.00%
+[PRUNE] Layer 13: seq_len=8388, keep_k=6710, kept=6710, pruned=1678, ratio=20.00%
+[PRUNE] Layer 16: seq_len=6710, keep_k=5368, kept=5368, pruned=1342, ratio=20.00%
+[PRUNE] Layer 19: seq_len=5368, keep_k=4294, kept=4294, pruned=1074, ratio=20.01%
+[PRUNE] Layer 22: seq_len=4294, keep_k=3435, kept=3435, pruned=859, ratio=20.00%
+[PRUNE] Layer 25: seq_len=3435, keep_k=2748, kept=2748, pruned=687, ratio=20.00%
+[Length 16384] End2End Results:
+  Baseline: prefill=3.5237s, decode=4.5569s, total=8.0807s
+  SDTP:     prefill=1.6137s, decode=8.1403s, total=9.7540s
+  Speedup:  prefill=2.18x, decode=0.56x, total=0.83x
+  KV Cache: baseline=16384, sdtp=2748, reduction=83.23%
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (32768). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+[Length 32768] Baseline End2End failed: CUDA out of memory. Tried to allocate 18.56 GiB. GPU 0 has a total capacity of 47.37 GiB of which 17.60 GiB is free. Process 3606394 has 2.27 GiB memory in use. Including non-PyTorch memory, this process has 27.45 GiB memory in use. Of the allocated memory 25.54 GiB is allocated by PyTorch, and 1.52 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[Length 32768] OOM on GPU, skipping this length.
+[OK] Results saved to results/latency_results_keep08.json
+[OK] Baseline results saved to results/latency_baseline_keep08.json
+[OK] SDTP results saved to results/latency_sdtp_keep08.json
+
+[Config: keep07] Profiling baseline vs SDTP (keep_ratio=0.7)
+----------------------------------------
+/home/user2/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:63: FutureWarning: The pynvml package is deprecated. Please install nvidia-ml-py instead. If you did not install pynvml directly, please report this to the maintainers of the package that installed pynvml for you.
+  import pynvml  # type: ignore[import]
+[Config] Using keep07 configuration:
+  Prune layers: [4, 7, 10, 13, 16, 19, 22, 25]
+  Keep ratio: 0.7
+  Cumulative keep ratio: 0.0576
+Loading checkpoint shards: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  3.36it/s]
+Profiling lengths: [1024, 2048, 4096, 8192, 16384, 32768]
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:601: UserWarning: `do_sample` is set to `False`. However, `temperature` is set to `0.7` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `temperature`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:606: UserWarning: `do_sample` is set to `False`. However, `top_p` is set to `0.8` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_p`.
+  warnings.warn(
+/home/user2/.local/lib/python3.10/site-packages/transformers/generation/configuration_utils.py:623: UserWarning: `do_sample` is set to `False`. However, `top_k` is set to `20` -- this flag is only used in sample-based generation modes. You should set `do_sample=True` or unset `top_k`.
+  warnings.warn(
+Starting from v4.46, the `logits` model output will have the same type as the model (except at train time, where it will always be FP32)
+The attention layers in this model are transitioning from computing the RoPE embeddings internally through `position_ids` (2D tensor with the indexes of the tokens), to using externally computed `position_embeddings` (Tuple of tensors, containing cos and sin). In v4.46 `position_ids` will be removed and `position_embeddings` will be mandatory.
+[PRUNE] Layer 4: seq_len=1024, keep_k=716, kept=716, pruned=308, ratio=30.08%
+[PRUNE] Layer 7: seq_len=716, keep_k=501, kept=501, pruned=215, ratio=30.03%
+[PRUNE] Layer 10: seq_len=501, keep_k=350, kept=350, pruned=151, ratio=30.14%
+[PRUNE] Layer 13: seq_len=350, keep_k=244, kept=244, pruned=106, ratio=30.29%
+[PRUNE] Layer 16: seq_len=244, keep_k=170, kept=170, pruned=74, ratio=30.33%
+[PRUNE] Layer 19: seq_len=170, keep_k=118, kept=118, pruned=52, ratio=30.59%
+[PRUNE] Layer 22: seq_len=118, keep_k=82, kept=82, pruned=36, ratio=30.51%
+[PRUNE] Layer 25: seq_len=82, keep_k=57, kept=57, pruned=25, ratio=30.49%
+[Length 1024] End2End Results:
+  Baseline: prefill=0.1508s, decode=2.1446s, total=2.2954s
+  SDTP:     prefill=0.1154s, decode=2.2930s, total=2.4083s
+  Speedup:  prefill=1.31x, decode=0.94x, total=0.95x
+  KV Cache: baseline=1024, sdtp=57, reduction=94.43%
+[PRUNE] Layer 4: seq_len=2048, keep_k=1433, kept=1433, pruned=615, ratio=30.03%
+[PRUNE] Layer 7: seq_len=1433, keep_k=1003, kept=1003, pruned=430, ratio=30.01%
+[PRUNE] Layer 10: seq_len=1003, keep_k=702, kept=702, pruned=301, ratio=30.01%
+[PRUNE] Layer 13: seq_len=702, keep_k=491, kept=491, pruned=211, ratio=30.06%
+[PRUNE] Layer 16: seq_len=491, keep_k=343, kept=343, pruned=148, ratio=30.14%
+[PRUNE] Layer 19: seq_len=343, keep_k=240, kept=240, pruned=103, ratio=30.03%
+[PRUNE] Layer 22: seq_len=240, keep_k=168, kept=168, pruned=72, ratio=30.00%
+[PRUNE] Layer 25: seq_len=168, keep_k=117, kept=117, pruned=51, ratio=30.36%
+[Length 2048] End2End Results:
+  Baseline: prefill=0.3216s, decode=2.5914s, total=2.9130s
+  SDTP:     prefill=0.1441s, decode=2.9406s, total=3.0847s
+  Speedup:  prefill=2.23x, decode=0.88x, total=0.94x
+  KV Cache: baseline=2048, sdtp=117, reduction=94.29%
+[PRUNE] Layer 4: seq_len=4096, keep_k=2867, kept=2867, pruned=1229, ratio=30.00%
+[PRUNE] Layer 7: seq_len=2867, keep_k=2006, kept=2006, pruned=861, ratio=30.03%
+[PRUNE] Layer 10: seq_len=2006, keep_k=1404, kept=1404, pruned=602, ratio=30.01%
+[PRUNE] Layer 13: seq_len=1404, keep_k=982, kept=982, pruned=422, ratio=30.06%
+[PRUNE] Layer 16: seq_len=982, keep_k=687, kept=687, pruned=295, ratio=30.04%
+[PRUNE] Layer 19: seq_len=687, keep_k=480, kept=480, pruned=207, ratio=30.13%
+[PRUNE] Layer 22: seq_len=480, keep_k=336, kept=336, pruned=144, ratio=30.00%
+[PRUNE] Layer 25: seq_len=336, keep_k=235, kept=235, pruned=101, ratio=30.06%
+[Length 4096] End2End Results:
+  Baseline: prefill=0.7538s, decode=0.2627s, total=1.0164s
+  SDTP:     prefill=0.3069s, decode=1.0267s, total=1.3335s
+  Speedup:  prefill=2.46x, decode=0.26x, total=0.76x
+  KV Cache: baseline=4096, sdtp=235, reduction=94.26%
+[PRUNE] Layer 4: seq_len=8192, keep_k=5734, kept=5734, pruned=2458, ratio=30.00%
+[PRUNE] Layer 7: seq_len=5734, keep_k=4013, kept=4013, pruned=1721, ratio=30.01%
+[PRUNE] Layer 10: seq_len=4013, keep_k=2809, kept=2809, pruned=1204, ratio=30.00%
+[PRUNE] Layer 13: seq_len=2809, keep_k=1966, kept=1966, pruned=843, ratio=30.01%
+[PRUNE] Layer 16: seq_len=1966, keep_k=1376, kept=1376, pruned=590, ratio=30.01%
+[PRUNE] Layer 19: seq_len=1376, keep_k=963, kept=963, pruned=413, ratio=30.01%
+[PRUNE] Layer 22: seq_len=963, keep_k=674, kept=674, pruned=289, ratio=30.01%
+[PRUNE] Layer 25: seq_len=674, keep_k=471, kept=471, pruned=203, ratio=30.12%
+[Length 8192] End2End Results:
+  Baseline: prefill=1.3880s, decode=3.2740s, total=4.6620s
+  SDTP:     prefill=0.5417s, decode=4.7063s, total=5.2480s
+  Speedup:  prefill=2.56x, decode=0.70x, total=0.89x
+  KV Cache: baseline=8192, sdtp=471, reduction=94.25%
+[PRUNE] Layer 4: seq_len=16384, keep_k=11468, kept=11468, pruned=4916, ratio=30.00%
+[PRUNE] Layer 7: seq_len=11468, keep_k=8027, kept=8027, pruned=3441, ratio=30.01%
+[PRUNE] Layer 10: seq_len=8027, keep_k=5618, kept=5618, pruned=2409, ratio=30.01%
+[PRUNE] Layer 13: seq_len=5618, keep_k=3932, kept=3932, pruned=1686, ratio=30.01%
+[PRUNE] Layer 16: seq_len=3932, keep_k=2752, kept=2752, pruned=1180, ratio=30.01%
+[PRUNE] Layer 19: seq_len=2752, keep_k=1926, kept=1926, pruned=826, ratio=30.01%
+[PRUNE] Layer 22: seq_len=1926, keep_k=1348, kept=1348, pruned=578, ratio=30.01%
+[PRUNE] Layer 25: seq_len=1348, keep_k=943, kept=943, pruned=405, ratio=30.04%
+[Length 16384] End2End Results:
+  Baseline: prefill=3.5964s, decode=4.5706s, total=8.1671s
+  SDTP:     prefill=1.3080s, decode=8.2197s, total=9.5277s
+  Speedup:  prefill=2.75x, decode=0.56x, total=0.86x
+  KV Cache: baseline=16384, sdtp=943, reduction=94.24%
+This is a friendly reminder - the current text generation call will exceed the model's predefined maximum length (32768). Depending on the model, you may observe exceptions, performance degradation, or nothing at all.
+[Length 32768] Baseline End2End failed: CUDA out of memory. Tried to allocate 18.56 GiB. GPU 0 has a total capacity of 47.37 GiB of which 17.60 GiB is free. Process 3606394 has 2.27 GiB memory in use. Including non-PyTorch memory, this process has 27.45 GiB memory in use. Of the allocated memory 25.54 GiB is allocated by PyTorch, and 1.52 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+[Length 32768] OOM on GPU, skipping this length.
+[OK] Results saved to results/latency_results_keep07.json
+[OK] Baseline results saved to results/latency_baseline_keep07.json
+[OK] SDTP results saved to results/latency_sdtp_keep07.json
+
+==========================================
+[OK] All configurations completed!
+==========================================
